@@ -96,6 +96,18 @@ pub enum PickerRow {
     Zone(usize),
 }
 
+/// The prayer window `now_ts` falls inside: the most recent prayer whose
+/// time has passed. The night gap (after Isyak, before tomorrow's Imsak)
+/// belongs to Isyak's window.
+pub fn current_prayer_from(row: &PrayerDay, now_ts: i64) -> (&'static str, i64) {
+    for (label, t) in PrayerDay::KINDS.iter().zip(row.times()).rev() {
+        if t <= now_ts {
+            return (label, t);
+        }
+    }
+    ("Isyak", row.isha)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Normal,
@@ -251,7 +263,24 @@ impl App {
             }
             Err(e) => {
                 self.loading = false;
-                self.error = Some(format!("Failed to load {code} {year}-{month:02}: {e:#} — press `r` to retry"));
+                // Offline parity with the CLI: fall back to a stale cache
+                // (TTL ignored) before giving up with an error.
+                let cache_name = cache::solat_cache_name(&code, year, month);
+                if let Some((fetched_at, stale)) = self.cache.load::<SolatResponse>(&cache_name) {
+                    self.months.insert(key, (fetched_at, stale));
+                    self.sync_table_selection();
+                    let age = cache::now_secs().saturating_sub(fetched_at);
+                    let age_txt = if age >= 3600 {
+                        format!("{}h", age / 3600)
+                    } else {
+                        format!("{}m", age / 60)
+                    };
+                    self.set_status(format!("Offline — showing cached data from {age_txt} ago"));
+                } else {
+                    self.error = Some(format!(
+                        "Failed to load {code} {year}-{month:02}: {e:#} — press `r` to retry"
+                    ));
+                }
             }
         }
     }
@@ -394,21 +423,18 @@ impl App {
         Some(("Imsak", r2.imsak, true))
     }
 
-    /// The prayer window we are currently inside, if any:
+    /// The prayer window we are currently inside:
     /// `(prayer, epoch_secs_of_its_start)` for the most recent prayer whose
-    /// time has passed. `None` = night (after Isyak, before tomorrow's Imsak).
+    /// time has passed. The night gap (after Isyak, before tomorrow's Imsak)
+    /// belongs to Isyak's window — its entry is returned so the header, the
+    /// prayer list and the table column stay consistent. `None` only when
+    /// there is no data for today.
     pub fn current_prayer(&self) -> Option<(&'static str, i64)> {
         let code = self.zone.as_ref()?.jakim_code.clone();
         let now = Local::now();
         let (_, today_data) = self.months.get(&(code, now.year(), now.month()))?;
         let row = today_data.prayers.iter().find(|p| p.day == now.day())?;
-        let now_ts = now.timestamp();
-        PrayerDay::KINDS
-            .iter()
-            .zip(row.times())
-            .rev()
-            .find(|(_, t)| *t <= now_ts)
-            .map(|(label, t)| (*label, t))
+        Some(current_prayer_from(row, now.timestamp()))
     }
 
     fn ensure_tomorrow_data(&mut self) {
@@ -785,4 +811,58 @@ async fn event_loop(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_row() -> PrayerDay {
+        // 2026-11-21 (MYT): Imsak 05:40 … Isyak 20:13.
+        PrayerDay {
+            day: 21,
+            hijri: "1448-06-11".into(),
+            imsak: 1795210800,
+            fajr: 1795211400,
+            syuruk: 1795215540,
+            dhuha: 1795217040,
+            dhuhr: 1795237320,
+            asr: 1795249440,
+            maghrib: 1795258800,
+            isha: 1795263180,
+        }
+    }
+
+    #[test]
+    fn window_between_prayers() {
+        // 14:00-ish: inside Zohor's window.
+        assert_eq!(
+            current_prayer_from(&sample_row(), 1795240000),
+            ("Zohor", 1795237320)
+        );
+        // Exactly at Maghrib: its window starts.
+        assert_eq!(
+            current_prayer_from(&sample_row(), 1795258800),
+            ("Maghrib", 1795258800)
+        );
+    }
+
+    #[test]
+    fn night_belongs_to_isyak() {
+        // 02:00-ish: before Imsak — Isyak's window.
+        assert_eq!(
+            current_prayer_from(&sample_row(), 1795197083),
+            ("Isyak", 1795263180)
+        );
+        // Just after Isyak: still Isyak.
+        assert_eq!(
+            current_prayer_from(&sample_row(), 1795263181),
+            ("Isyak", 1795263180)
+        );
+        // Exactly at Imsak: Imsak's window starts (night ends).
+        assert_eq!(
+            current_prayer_from(&sample_row(), 1795210800),
+            ("Imsak", 1795210800)
+        );
+    }
 }

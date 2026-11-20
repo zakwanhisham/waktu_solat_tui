@@ -44,10 +44,19 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         None => line.push(Span::raw("· loading zones… ")),
     }
     let spans = Line::from(line).right_aligned();
+    // Active prayer window, highlighted; night renders dim (it isn't a
+    // prayer). The Next panel below carries the details.
+    let active = match app.current_prayer() {
+        Some((label, _)) => Span::styled(
+            format!("Now: {label}  ·  "),
+            Style::new().fg(ACCENT).bold(),
+        ),
+        None => Span::styled("Now: Night  ·  ", Style::new().dim()),
+    };
     f.render_widget(
         Paragraph::new(vec![
             spans,
-            Line::from(Span::styled(format!("{date}"), Style::new().dim())),
+            Line::from(vec![active, Span::styled(format!("{date}"), Style::new().dim())]),
         ]),
         area,
     );
@@ -91,17 +100,9 @@ fn draw_next_prayer(f: &mut Frame, app: &App, area: Rect) {
                 Span::raw(format!(" at {}, in ", target.format("%H:%M"))),
                 Span::styled(countdown, Style::new().bold()),
             ]);
-            let line2 = match todays {
-                Some(t) => Line::from(Span::styled(
-                    format!(
-                        "Imsak {} · Subuh {} · Syuruk {} · Dhuha {} · Zohor {} · Asar {} · Maghrib {} · Isyak {}",
-                        fmt_epoch(t.imsak), fmt_epoch(t.fajr), fmt_epoch(t.syuruk), fmt_epoch(t.dhuha),
-                        fmt_epoch(t.dhuhr), fmt_epoch(t.asr), fmt_epoch(t.maghrib), fmt_epoch(t.isha),
-                    ),
-                    Style::new().dim(),
-                )),
-                None => Line::from(Span::styled("—", Style::new().dim())),
-            };
+            // The night gap belongs to Isyak's window — `current_prayer()`
+            // returns Isyak then, so the list stays highlighted.
+            let line2 = times_line(todays.as_ref(), app.current_prayer().map(|(l, _)| l));
             vec![line1, line2]
         }
         None => vec![Line::from(match (app.loading, &app.error) {
@@ -111,6 +112,27 @@ fn draw_next_prayer(f: &mut Frame, app: &App, area: Rect) {
         })],
     };
     f.render_widget(Paragraph::new(content).wrap(Wrap { trim: false }).block(block), area);
+}
+
+/// The `Imsak … · Isyak …` line in the Next panel. The prayer window we are
+/// currently in is highlighted (bold accent); the rest stay dim.
+fn times_line(todays: Option<&PrayerDay>, active: Option<&str>) -> Line<'static> {
+    let Some(t) = todays else {
+        return Line::from(Span::styled("—", Style::new().dim()));
+    };
+    let mut spans = Vec::new();
+    for (i, (label, secs)) in PrayerDay::KINDS.iter().zip(t.times()).enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" · ", Style::new().dim()));
+        }
+        let text = format!("{label} {}", fmt_epoch(secs));
+        spans.push(if Some(*label) == active {
+            Span::styled(text, Style::new().bold().fg(ACCENT))
+        } else {
+            Span::styled(text, Style::new().dim())
+        });
+    }
+    Line::from(spans)
 }
 
 fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
@@ -185,6 +207,12 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
     ]);
     header_cells.extend(["Imsak", "Subuh", "Syuruk", "Dhuha", "Zohor", "Asar", "Maghrib", "Isyak"]);
 
+    // Which prayer column (0-7 within the prayer cells) is active right now —
+    // styled per-cell below so empty rows never get a highlight stripe.
+    let active_prayer = app
+        .current_prayer()
+        .and_then(|(label, _)| PrayerDay::KINDS.iter().position(|k| *k == label));
+
     let header = Row::new(header_cells)
     .style(Style::new().bold().fg(ACCENT))
     .bottom_margin(0);
@@ -205,19 +233,34 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
                     } else {
                         Style::new()
                     };
-                    Row::new(prayer_cells(p, hijri_style_eff, hijri_width.is_some())).style(style)
+                    Row::new(prayer_cells(
+                        p,
+                        hijri_style_eff,
+                        hijri_width.is_some(),
+                        active_prayer,
+                        is_today,
+                    ))
+                    .style(style)
                 })
                 .collect()
         })
         .unwrap_or_default();
 
+    let content_w = widths
+        .iter()
+        .filter_map(|c| match c {
+            Constraint::Length(l) => Some(*l),
+            _ => None,
+        })
+        .sum::<u16>()
+        + spacing * (widths.len().saturating_sub(1) as u16)
+        + 2; // "› " selection symbol
+
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .title(Span::styled(title, Style::new().bold()));
     let table = Table::new(rows, widths)
         .header(header)
-        .block(
-            Block::bordered()
-                .border_type(BorderType::Rounded)
-                .title(Span::styled(title, Style::new().bold())),
-        )
         .column_spacing(spacing)
         // White on strong blue: readable in any terminal theme (fixed
         // 256-palette entries, not theme-remappable 16-color values).
@@ -226,28 +269,35 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
         )
         .highlight_symbol("› ");
 
-    f.render_stateful_widget(table, area, &mut app.table_state);
+    // The block spans the full terminal; the table is clipped to its content
+    // width inside it, so row/cell highlights stop at the last column instead
+    // of spilling across the empty area to the right.
+    f.render_widget(block.clone(), area);
+    let inner = block.inner(area);
+    let table_area = Rect { width: inner.width.min(content_w), ..inner };
+    f.render_stateful_widget(table, table_area, &mut app.table_state);
 }
-
 fn prayer_cells(
     p: &PrayerDay,
     hijri_style: crate::hijri::HijriStyle,
     include_hijri: bool,
+    active_prayer: Option<usize>,
+    is_today: bool,
 ) -> Vec<Cell<'static>> {
     let mut cells = vec![Cell::from(format!("{:2}", p.day))];
     if include_hijri {
         cells.push(Cell::from(crate::hijri::format_cell(&p.hijri, hijri_style)));
     }
-    cells.extend([
-        Cell::from(fmt_epoch(p.imsak)),
-        Cell::from(fmt_epoch(p.fajr)),
-        Cell::from(fmt_epoch(p.syuruk)),
-        Cell::from(fmt_epoch(p.dhuha)),
-        Cell::from(fmt_epoch(p.dhuhr)),
-        Cell::from(fmt_epoch(p.asr)),
-        Cell::from(fmt_epoch(p.maghrib)),
-        Cell::from(fmt_epoch(p.isha)),
-    ]);
+    for (i, secs) in p.times().into_iter().enumerate() {
+        let mut cell = Cell::from(fmt_epoch(secs));
+        // Subtle fixed-palette bg on the active prayer's cell — per-cell, so
+        // empty rows below the data never get a highlight stripe. Skipped on
+        // today's row, which already carries its own full-row highlight.
+        if active_prayer == Some(i) && !is_today {
+            cell = cell.style(Style::new().bg(Color::Indexed(236)));
+        }
+        cells.push(cell);
+    }
     cells
 }
 
@@ -458,5 +508,44 @@ fn truncate(s: &str, max: usize) -> String {
     } else {
         let cut: String = s.chars().take(max.saturating_sub(1)).collect();
         format!("{cut}…")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn times_line_highlights_only_active_prayer() {
+        let day = PrayerDay {
+            day: 21,
+            hijri: "1448-06-11".into(),
+            imsak: 1,
+            fajr: 2,
+            syuruk: 3,
+            dhuha: 4,
+            dhuhr: 5,
+            asr: 6,
+            maghrib: 7,
+            isha: 8,
+        };
+        // Zohor (index 4) is active.
+        let line = times_line(Some(&day), Some("Zohor"));
+        let bold_count = line.spans.iter().filter(|s| s.style.add_modifier.contains(Modifier::BOLD)).count();
+        assert_eq!(bold_count, 1, "exactly one highlighted segment");
+        assert!(line.spans.iter().any(|s| s.content.contains("Zohor")
+            && s.style.add_modifier.contains(Modifier::BOLD)));
+        // All other segments are dim.
+        let others_dim = line
+            .spans
+            .iter()
+            .filter(|s| !s.content.trim().is_empty() && s.content != " · ")
+            .all(|s| s.style.add_modifier.contains(Modifier::DIM) || s.style.fg.is_some());
+        assert!(others_dim);
+        // Night → no highlight, all dim.
+        let night = times_line(Some(&day), None);
+        assert!(night.spans.iter().all(|s| s.style.add_modifier.contains(Modifier::DIM)));
+        // Missing data → em dash.
+        assert_eq!(times_line(None, Some("Zohor")).to_string(), "—");
     }
 }

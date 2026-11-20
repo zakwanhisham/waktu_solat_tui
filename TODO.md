@@ -224,11 +224,94 @@ Arabic-Indic digits); month name shown directly in the table column
 - [x] Docs: README config key + Arabic-style terminal bidi caveat; mark the
   RTL line under *Stretch ideas* as superseded
 
-## Stretch ideas
+## Milestone 9 — Data modes, offline resilience, active-prayer column
 
-- [x] Auto-detect the nearest zone via GPS coords — superseded by Milestone 6
-- [x] Desktop notification a few minutes before the next prayer — superseded by Milestone 7
-- [x] RTL-friendly Hijri month rendering — superseded by Milestone 8
+Goal: turn `waktu_solat` from a display app into a scriptable data source,
+fix the TUI's offline gap, and finish the last Milestone 2 leftover
+(accenting the prayer column you're currently in).
+
+- [x] CLI data modes (`src/cli.rs`, `main.rs`):
+  - [x] `--json` — today's row as one compact JSON object: zone, negeri,
+    daerah, gregorian date, hijri string, all 8 times as
+    `{"epoch": i64, "local": "HH:MM"}` keyed by lowercase name, `current`
+    window ("Night" after Isyak), and `next` `{name, epoch, local,
+    in_seconds}` (null when beyond the loaded month)
+  - [x] `--csv` — header `date,hijri,imsak,fajr,syuruk,dhuha,dhuhr,asar,
+    maghrib,isha` + today's row (local `HH:MM` values)
+  - [x] `--list-zones` — grep-able `CODE | state | district` lines; no month
+    fetch, no geolocation
+  - [x] `--json`/`--csv` imply headless mode (like `--now`); compose with
+    `--zone`/`--auto-zone`; `--json --csv` together → argparse error, exit 2
+  - [x] All output through the existing single-buffered-write path (no
+    broken-pipe panics)
+  - [x] Update `USAGE` + README with pipe examples (`jq`, status bars)
+  - [x] Tests: JSON parses via `serde_json` (shape, times map, next
+    entry, Night current, null next when no tomorrow row), CSV field order,
+    zone-line format
+- [x] TUI stale-cache fallback (`src/app.rs::on_month_loaded`) — offline
+  parity with the CLI:
+  - [x] On fetch error, `cache.load()` ignoring TTL; stale copy inserted
+    into `months` + transient footer status
+    ("Offline — showing cached data from Xh ago") — verified live via a
+    broken proxy + backdated cache
+  - [x] Red error only when there is no cache at all
+- [x] Active-prayer column highlight (`src/ui.rs`):
+  - [x] `active_column(label, hijri_present)` maps the current window label
+    to the table column (KINDS order; shifts with the adaptive Hijri tier);
+    `TableState::select_column` + `column_highlight_style` bg `Indexed(236)`
+    — fixed palette, distinct from the gold today-row and the blue
+    selection; Night → no highlight
+  - [x] Column highlight reworked to per-cell styling (user report: the
+    column stripe painted empty rows and the selected row spilled across the
+    empty right side of wide terminals): the active prayer's cell carries the
+    subtle bg only on real data rows, and the row-selection highlight stays
+    within the columns
+  - [x] Table block spans the full terminal width again (user follow-up):
+    the block renders at full width while the table itself is clipped to its
+    content width inside it — highlights stop at the last column, the block
+    fills the terminal, and narrow terminals still fill completely
+  - [x] Highlight walks across columns via the 1s tick; unit-tested mapping
+    (including the shift when the Hijri column is hidden)
+  - [x] The prayer-times list line in the Next panel highlights the active
+    prayer too (`times_line` helper): its name+time render bold accent while
+    the other seven stay dim. The night gap (after Isyak, before tomorrow's
+    Imsak) belongs to Isyak's window — its entry stays highlighted
+    (verified live); Night → header label only
+  - [x] Night→Isyak made consistent everywhere via `current_prayer_from()`
+    (pure, unit-tested): the header now reads `Now: Isyak` in bold accent
+    during the night, the Next panel matches, and the Isyak column carries
+    the subtle table highlight until Imsak (`Night` label remains only for
+    the no-data state)
+
+## Milestone 10 — Release engineering
+
+Goal: turn a zero-commit local project into an installable, published one.
+
+- [ ] Git history: initial commit of the current state; clean per-feature
+  commits from Milestone 9 on; tag `v0.1.0`
+- [ ] CI (GitHub Actions `ci.yml`): ubuntu + stable toolchain —
+  `cargo build`, `cargo test`, `cargo clippy -- -D warnings`; on push/PR
+- [ ] Release workflow (`release.yml` on tag push): build linux-x86_64 gnu
+  and musl (static) binaries, attach to a GitHub Release (hand-rolled
+  matrix — no `cargo-dist` tooling unless it proves trivial)
+- [ ] Package naming: rename the *package* to `waktu-solat` (crates.io
+  convention) while keeping the binary name `waktu_solat`; update
+  `--version` output and check `cargo install` works
+- [ ] README: prebuilt-binary install instructions, `cargo install`, CI
+  status + license badges
+- [ ] Prepare the api.waktusolat.app "Submit your app" blurb (repo link +
+  feature summary) for manual submission
+
+## Stretch ideas (new)
+
+- [ ] Terminal title countdown (OSC): `Maghrib in 04:12` in the window title
+  / tmux pane title
+- [ ] Headless `daemon` mode + systemd user unit (always-on reminder box)
+- [ ] Reminder hooks: `notify_command` config (e.g. play adzan audio),
+  per-prayer lead times, D-Bus snooze actions
+- [ ] Mouse support (scroll = move selection, click = picker row)
+- [ ] Theme config keys for terminals that fight our palette
+- [ ] README screenshots / asciinema GIF
 
 ## Non-goals
 

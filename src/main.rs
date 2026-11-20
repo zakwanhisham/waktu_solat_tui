@@ -27,6 +27,25 @@ Options:
                 prayer times for the detected zone. IP geolocation is used
                 unless coordinates are given.
   --lat DEG     Manual latitude (requires --lng); skips IP geolocation.
+Usage: waktu_solat [ZONE] | [--zone CODE] [--now] [--auto-zone] [--json | --csv]
+       waktu_solat --list-zones
+       waktu_solat -h | --help
+       waktu_solat -V | --version
+
+Arguments:
+  ZONE          JAKIM zone code to start with (e.g. WLY01, SGR03).
+                Overrides the zone persisted in the config file.
+
+Options:
+  --zone CODE   Same as the positional ZONE argument.
+  --now         Print today's prayer times and exit (no TUI).
+  --auto-zone   Detect the nearest zone and exit. With --now, print today's
+                prayer times for the detected zone. IP geolocation is used
+                unless coordinates are given.
+  --json        Output today's data as JSON (implies headless mode).
+  --csv         Output today's data as CSV (implies headless mode).
+  --list-zones  Print all JAKIM zones as `CODE | state | district` and exit.
+  --lat DEG     Manual latitude (requires --lng); skips IP geolocation.
   --lng DEG     Manual longitude (requires --lat); skips IP geolocation.
   -h, --help    Show this help.
   -V, --version Show the version.
@@ -37,6 +56,9 @@ async fn main() -> Result<()> {
     let mut zone_override: Option<String> = None;
     let mut now_mode = false;
     let mut auto_zone = false;
+    let mut json = false;
+    let mut csv = false;
+    let mut list_zones = false;
     let mut lat: Option<f64> = None;
     let mut lng: Option<f64> = None;
     let mut args = std::env::args().skip(1);
@@ -52,6 +74,9 @@ async fn main() -> Result<()> {
             }
             "--now" => now_mode = true,
             "--auto-zone" => auto_zone = true,
+            "--json" => json = true,
+            "--csv" => csv = true,
+            "--list-zones" => list_zones = true,
             "--zone" => {
                 zone_override = Some(
                     args.next().context("--zone requires a zone code (e.g. --zone WLY01)")?,
@@ -84,6 +109,19 @@ async fn main() -> Result<()> {
         }
     }
 
+    if json && csv {
+        eprintln!("error: --json and --csv are mutually exclusive (see --help)");
+        std::process::exit(2);
+    }
+    let format = if json {
+        cli::OutputFormat::Json
+    } else if csv {
+        cli::OutputFormat::Csv
+    } else {
+        cli::OutputFormat::Human
+    };
+    let headless = now_mode || json || csv;
+
     if lat.xor(lng).is_some() {
         eprintln!("error: --lat and --lng must be given together (see --help)");
         std::process::exit(2);
@@ -91,24 +129,28 @@ async fn main() -> Result<()> {
     // Manual coordinates imply auto mode.
     let auto_zone = auto_zone || lat.is_some();
 
+    if list_zones {
+        return cli::list_zones().await;
+    }
+
     if auto_zone {
-        // An explicit --zone wins over detection (applies to --now too).
+        // An explicit --zone wins over detection (applies to headless output).
         if let Some(code) = &zone_override
-            && now_mode {
-                return cli::print_now(Some(code.clone())).await;
+            && headless {
+                return cli::print_now(Some(code.clone()), format).await;
             }
         let manual = lat.zip(lng);
         let zone = cli::detect_zone_endpoint(manual).await?;
-        if now_mode {
-            return cli::print_now(Some(zone.jakim_code.clone())).await;
+        if headless {
+            return cli::print_now(Some(zone.jakim_code.clone()), format).await;
         }
         println!("Detected zone: {}", zone.display());
         return Ok(());
     }
 
-    // `--now` is headless: no terminal init, works without a TTY.
-    if now_mode {
-        return cli::print_now(zone_override).await;
+    // Headless output (--now/--json/--csv): no terminal init, works without a TTY.
+    if headless {
+        return cli::print_now(zone_override, format).await;
     }
 
     let mut terminal = ratatui::init();

@@ -71,10 +71,26 @@ cargo run --release
 waktu_solat [ZONE]        start with a specific JAKIM zone code (e.g. WLY01)
 waktu_solat --zone CODE   same as above, overrides the persisted config
 waktu_solat --now         print today's prayer times and exit (no TUI)
+waktu_solat --json        today's data as JSON (script/status-bar friendly)
+waktu_solat --csv         today's data as CSV
+waktu_solat --list-zones  print all JAKIM zones as `CODE | state | district`
 waktu_solat --auto-zone   detect the nearest zone and exit (works with --now)
 waktu_solat --lat --lng   manual coordinates; skips IP geolocation
 waktu_solat --help        usage
 waktu_solat --version     version
+```
+
+### Scripting / status bars
+
+`--json` includes epoch seconds and local `HH:MM` strings, plus the current
+window and the upcoming prayer with `in_seconds` — one `jq` away from a
+waybar/polybar module or a cron script:
+
+```bash
+waktu_solat --now --json | jq -r '.next.local'          # 05:40
+waktu_solat --now --json | jq -r '.times.maghrib.epoch' # epoch seconds
+waktu_solat --now --csv | tail -1 | cut -d, -f3         # 05:40
+waktu_solat --list-zones | grep Selangor                # browse zones
 ```
 
 ### Desktop reminders
