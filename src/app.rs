@@ -173,23 +173,18 @@ impl App {
         if self.zone.is_some() {
             return;
         }
-        if let Some(code) = &self.zone_override {
-            match self.zones.iter().find(|z| &z.jakim_code == code) {
-                Some(z) => self.zone = Some(z.clone()),
-                None => {
-                    self.error = Some(format!("Zone `{code}` not found — falling back to default"));
-                    self.zone = self.zones.first().cloned();
-                }
-            }
-            return;
-        }
         let wanted = self.cache.load_config().zone;
-        self.zone = self
-            .zones
-            .iter()
-            .find(|z| Some(&z.jakim_code) == wanted.as_ref())
-            .or_else(|| self.zones.first())
-            .cloned();
+        match crate::cli::resolve_zone(
+            &self.zones,
+            wanted.as_deref(),
+            self.zone_override.as_deref(),
+        ) {
+            Ok(zone) => self.zone = Some(zone),
+            Err(e) => {
+                self.error = Some(format!("{e} — falling back to default"));
+                self.zone = self.zones.first().cloned();
+            }
+        }
     }
 
     fn on_zones_loaded(&mut self, result: Result<Vec<Zone>>) {

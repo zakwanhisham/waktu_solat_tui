@@ -63,8 +63,29 @@ cargo run --release
 ```text
 waktu_solat [ZONE]        start with a specific JAKIM zone code (e.g. WLY01)
 waktu_solat --zone CODE   same as above, overrides the persisted config
+waktu_solat --now         print today's prayer times and exit (no TUI)
 waktu_solat --help        usage
 waktu_solat --version     version
+```
+
+`--now` output (headless, script-friendly — works through pipes):
+
+```text
+$ waktu_solat --now --zone WLY01
+Waktu Solat · WLY01 — Wilayah Persekutuan, Kuala Lumpur, Putrajaya
+Sat, 21 Nov 2026
+Hijri 1448-06-11
+
+  Imsak    05:40
+  Subuh    05:50
+  Syuruk   06:58
+  Dhuha    07:23
+  Zohor    13:02
+  Asar     16:24
+  Maghrib  19:00
+  Isyak    20:13
+
+Now: Night · Next: Imsak at 05:40 (in 4h 12m)
 ```
 
 ## Storage locations
@@ -101,6 +122,7 @@ Project structure:
 
 - `src/api.rs` — API models and HTTP client
 - `src/cache.rs` — disk cache + config persistence
+- `src/cli.rs` — headless `--now` output, shared zone resolver
 - `src/app.rs` — application state, event loop, key handling, next-prayer logic
 - `src/ui.rs` — ratatui rendering
 

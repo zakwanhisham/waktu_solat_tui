@@ -67,6 +67,31 @@ A terminal UI (Rust + ratatui) that displays Malaysia prayer times from
 - [x] Optional: `--zone WLY01` CLI arg overrides the persisted zone (also `waktu_solat WLY01`, `--help`, `--version`)
 - [x] Resize handling / reasonably render at small terminal sizes (resize events trigger immediate redraw; narrow terminals clip columns gracefully)
 
+## Milestone 5 — CLI mode (`--now`)
+
+Goal: `waktu_solat --now` prints today's prayer times and exits — headless,
+no TUI, for scripts / status bars / shell prompts. Reuses the same data layer
+and caching as the TUI.
+
+- [x] Parse `--now` in `main.rs`; when set, skip `ratatui::init()` entirely and
+  run the headless path (works without a TTY)
+- [x] New `src/cli.rs` with `print_now(zone_override)`:
+  - [x] Resolve zone the same way the TUI does: `--zone` arg > persisted
+    config > first zone (shared `resolve_zone` helper used by `App::set_zones` too)
+  - [x] Load month data cache-first (24 h TTL) via a shared
+    `Cache::load_fresh(name, ttl)` helper; fall back to a stale cache when
+    offline; stderr error + exit code 1 if neither is available
+  - [x] Print today's row: zone header, Gregorian + Hijri date, the 8 prayer
+    times aligned in a column, local time (H:M)
+  - [x] Mark the current prayer window and the next prayer with a countdown
+    (handles after-Isyak → tomorrow's Imsak)
+- [x] `--now` composes with `--zone` / positional ZONE
+- [x] Output written in a single buffered write — piping through `head` /
+  `grep` does not panic on broken pipes
+- [x] Update `USAGE` text and README CLI section
+- [x] Tests: `--now` with cached data, `--now --zone SGR03`, invalid zone,
+  pipe-through `head`/`grep`, TUI unaffected by the refactor
+
 ## Stretch ideas
 
 - [ ] Auto-detect the nearest zone via GPS coords (API supports geographic resolution)

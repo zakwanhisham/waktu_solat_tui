@@ -52,6 +52,12 @@ impl Cache {
         Some((entry.fetched_at, entry.payload))
     }
 
+    /// Like `load`, but only returns the payload when it is younger than `ttl`.
+    pub fn load_fresh<T: DeserializeOwned>(&self, name: &str, ttl: u64) -> Option<T> {
+        let (fetched_at, payload) = self.load(name)?;
+        (now_secs() < fetched_at + ttl).then_some(payload)
+    }
+
     pub fn store<T: Serialize>(&self, name: &str, payload: &T) {
         let entry = Entry { fetched_at: now_secs(), payload };
         if let Ok(bytes) = serde_json::to_vec(&entry) {
