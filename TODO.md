@@ -171,9 +171,9 @@ timestamp; decision logic pure + unit-tested, D-Bus call behind a
     + footer status
   - [x] `n` key toggles notifications (persisted); turning on arms the
     current window, turning off suppresses it
-- [x] UI (`src/ui.rs`): transient footer confirmation on toggle (the hints
-  line was too full for a permanent idle hint), notification state shown in
-  the `?` help overlay, `n` entry included
+- [x] UI (`src/ui.rs`): permanent notification-state indicator right-aligned
+  in the Next panel title (`notify: on` accent / `notify: off` dim), transient
+  footer confirmation on toggle, notification state in the `?` help overlay
 - [x] Unit tests (`should_notify`): boundary at exactly 10:00, inside
   window, dedup for the same occurrence, re-arm for the next one,
   post-prayer skip; plus a capture-double `Notifier` test

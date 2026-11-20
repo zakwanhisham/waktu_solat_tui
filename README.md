@@ -92,7 +92,9 @@ or setting `"notify": true` in `~/.config/waktu_solat/config.json`:
 
 The reminder fires once per prayer occurrence — if the app is started inside
 the lead window it still notifies; if it starts after a prayer has passed,
-that occurrence is skipped. Requires a desktop notification daemon
+that occurrence is skipped. The current state is always visible in the
+**Next panel title** (`notify: on` / `notify: off`, right-aligned). Requires
+a desktop notification daemon
 (`org.freedesktop.Notifications`); on headless/SSH machines the app detects
 the failure once, remembers it (`notify_available: false`), and silently
 stops trying — the TUI itself is unaffected.

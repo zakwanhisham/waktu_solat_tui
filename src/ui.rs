@@ -54,7 +54,16 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_next_prayer(f: &mut Frame, app: &App, area: Rect) {
-    let block = Block::bordered().title(" Next ").title_style(Style::new().fg(ACCENT).bold());
+    // Permanent notification-state indicator, right-aligned in the title row
+    // (the footer hint line has no room for it).
+    let notify_state = if app.notify_enabled {
+        Line::styled("notify: on ", Style::new().fg(ACCENT)).right_aligned()
+    } else {
+        Line::styled("notify: off ", Style::new().dim()).right_aligned()
+    };
+    let block = Block::bordered()
+        .title(Line::styled(" Next ", Style::new().fg(ACCENT).bold()))
+        .title(notify_state);
 
     let code = app.zone.as_ref().map(|z| z.jakim_code.clone());
     let now = Local::now();
