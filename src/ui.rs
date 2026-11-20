@@ -99,6 +99,10 @@ fn draw_next_prayer(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
+    // Rows visible inside the bordered block: height - 2 borders - 1 header
+    // row. The app uses this to size half-page scrolls (Ctrl-d / Ctrl-u).
+    app.viewport_rows = area.height.saturating_sub(3).max(1);
+
     let title = match (&app.zone, app.view_data()) {
         (Some(z), Some((fetched, _data))) => {
             let age = cache_age(fetched);
@@ -187,10 +191,14 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         Span::raw(" quit  "),
         Span::styled("s", Style::new().bold()),
         Span::raw(" zone  "),
-        Span::styled("←→", Style::new().bold()),
-        Span::raw(" month  "),
         Span::styled("j/k", Style::new().bold()),
         Span::raw(" move  "),
+        Span::styled("g/G", Style::new().bold()),
+        Span::raw(" ends  "),
+        Span::styled("^d/^u", Style::new().bold()),
+        Span::raw(" page  "),
+        Span::styled("h/l", Style::new().bold()),
+        Span::raw(" month  "),
         Span::styled("t", Style::new().bold()),
         Span::raw(" today  "),
         Span::styled("r", Style::new().bold()),

@@ -49,7 +49,7 @@ cargo run --release
 | Key | Action |
 |---|---|
 | `q` / `Esc` / `Ctrl-C` | Quit |
-| `s` | Open zone picker (type to filter, `↑`/`↓` to move, `Enter` to select) |
+| `s` | Open zone picker (type to filter, `↑`/`↓` or `Ctrl-n`/`Ctrl-p` to move, `Enter` to select) |
 | `←` / `→` (or `,` / `.`) | Previous / next month |
 | `j` / `k` (or `↑` / `↓`) | Move row selection |
 | `t` | Jump back to the current month / today |

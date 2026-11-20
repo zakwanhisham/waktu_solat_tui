@@ -53,6 +53,11 @@ pub struct App {
     pub picker_filtered: Vec<usize>,
     pub picker_sel: usize,
     pub should_quit: bool,
+
+    /// Vim-style numeric prefix, e.g. the `12` in `12j`. 0 = no prefix.
+    count: u32,
+    /// Rows visible in the table (set by the renderer); used for half-page scrolls.
+    pub viewport_rows: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,6 +89,8 @@ impl App {
             picker_filtered: Vec::new(),
             picker_sel: 0,
             should_quit: false,
+            count: 0,
+            viewport_rows: 12,
         })
     }
 
@@ -385,11 +392,31 @@ impl App {
     }
 
     fn on_key_normal(&mut self, key: KeyEvent) {
+        // Vim-style numeric prefix (`12j` moves 12 rows down). `0` only starts
+        // a count when one is already in progress (bare `0` is ignored).
+        if let KeyCode::Char(c) = key.code {
+            if (c.is_ascii_digit() && c != '0') || (c == '0' && self.count > 0) {
+                self.count = (self.count.saturating_mul(10) + u32::from(c as u8 - b'0')).min(999);
+                return;
+            }
+        }
+        let n = if self.count == 0 { 1 } else { self.count };
+        self.count = 0;
+        let half_page = (self.viewport_rows / 2).max(1) as i32;
+
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
             KeyCode::Char('s') => self.open_picker(),
-            KeyCode::Char('j') | KeyCode::Down => self.table_move(1),
-            KeyCode::Char('k') | KeyCode::Up => self.table_move(-1),
+            KeyCode::Char('j') | KeyCode::Down => self.table_move(n as i32),
+            KeyCode::Char('k') | KeyCode::Up => self.table_move(-(n as i32)),
+            KeyCode::Char('g') => self.table_select_top(),
+            KeyCode::Char('G') => self.table_select_bottom(),
+            KeyCode::Char('d') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                self.table_move(half_page);
+            }
+            KeyCode::Char('u') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                self.table_move(-half_page);
+            }
             KeyCode::Left | KeyCode::Char('h') | KeyCode::Char(',') => self.shift_month(-1),
             KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('.') => self.shift_month(1),
             KeyCode::Char('t') => {
@@ -410,12 +437,32 @@ impl App {
         }
     }
 
+    fn table_select_top(&mut self) {
+        if self.view_data().is_some_and(|(_, d)| !d.prayers.is_empty()) {
+            self.table_state.select(Some(0));
+        }
+    }
+
+    fn table_select_bottom(&mut self) {
+        if let Some((_, d)) = self.view_data() {
+            let len = d.prayers.len();
+            if len > 0 {
+                self.table_state.select(Some(len - 1));
+            }
+        }
+    }
+
     fn on_key_picker(&mut self, key: KeyEvent) {
+        let ctrl = key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Esc => self.mode = Mode::Normal,
             KeyCode::Enter => self.picker_confirm(),
             KeyCode::Up => self.picker_move(-1),
             KeyCode::Down => self.picker_move(1),
+            // Plain letters go into the search box, so picker navigation uses
+            // Ctrl-n / Ctrl-p (readline convention) or the arrow keys.
+            KeyCode::Char('n') if ctrl => self.picker_move(1),
+            KeyCode::Char('p') if ctrl => self.picker_move(-1),
             KeyCode::Backspace => {
                 self.picker_query.pop();
                 self.update_picker_filter();
