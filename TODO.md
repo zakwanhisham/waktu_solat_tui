@@ -92,9 +92,53 @@ and caching as the TUI.
 - [x] Tests: `--now` with cached data, `--now --zone SGR03`, invalid zone,
   pipe-through `head`/`grep`, TUI unaffected by the refactor
 
+## Milestone 6 — Auto-detect zone
+
+Goal: resolve the nearest JAKIM zone from the user's location. Opt-in only —
+an IP lookup is a third-party request, so detection never runs implicitly at
+startup.
+
+Decisions: IP-based geolocation (no new deps); bundled ~60-entry zone-centroid
+table as offline fallback; TUI entry points = pinned picker row + `a` key.
+
+- [x] Confirm the API's geo endpoint from the api-waktusolat-x repo —
+  found and verified live: `GET /zones/{lat}/{lng}` → `{zone, state, district}`
+  (HTTP 500 "No zone found" outside Malaysia)
+- [x] `src/geo.rs` (new):
+  - [x] `detect_location()` — IP geolocation via `ipwho.is` (free, no key,
+    HTTPS, 5s timeout); parses `{lat, lon, success}`
+  - [x] `ZONE_CENTROIDS: [(&str, lat, lng); 60]` static table, derived from
+    the real `/zones` list and each zone's districts
+  - [x] `nearest_zone_client(lat, lng)` (as `nearest_zone_code`) — haversine
+    to all centroids, pick minimum; 250 km threshold → "outside Malaysia"
+- [x] `src/api.rs`: `nearest_zone(lat, lng)` — server-side polygon resolution
+  via `GET /zones/{lat}/{lng}`; `Err` on missing route/outside-Malaysia so
+  callers fall back to the centroid table
+- [x] CLI (`main.rs`, `src/cli.rs`):
+  - [x] `--auto-zone` — detect and print the zone, exit
+  - [x] `--now --auto-zone` — today's times for the detected zone
+  - [x] `--lat <f> --lng <f>` — manual coords, skips IP lookup (also the
+    deterministic test path); implies auto mode; both required together
+  - [x] Resolution order: explicit coords → IP lookup → server geo route →
+    centroid fallback → stderr error + exit 1 (explicit `--zone` wins over
+    detection)
+  - [x] Update `USAGE` text
+- [x] TUI (`src/app.rs`, `src/ui.rs`):
+  - [x] Pinned "Use my location" row at the top of the zone picker
+    (empty query only; `PickerRow` enum replaces the raw index list)
+  - [x] `a` in Normal mode opens the picker (auto row pre-selected)
+  - [x] Async plumbing: single `Msg::AutoZoneResolved` (simpler than the
+    planned two-message flow; `detecting` flag guards double-spawns); footer
+    shows "Detecting location…" while pending
+  - [x] Success → existing `select_zone()` (persistence + month fetch for
+    free); failure → footer error with "pick a zone manually" hint
+- [x] Unit tests: haversine sanity, KL→WLY01, Klang→SGR03, George Town→PNG01,
+  Labuan→WLY02, outside-Malaysia threshold
+- [x] README: privacy note (what is sent, when) + new CLI flags documented
+
 ## Stretch ideas
 
-- [ ] Auto-detect the nearest zone via GPS coords (API supports geographic resolution)
+- [x] Auto-detect the nearest zone via GPS coords — superseded by Milestone 6
 - [ ] Desktop notification a few minutes before the next prayer
 - [ ] RTL-friendly Hijri month rendering
 

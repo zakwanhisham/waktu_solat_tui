@@ -11,6 +11,14 @@ pub struct Zone {
     pub daerah: String,
 }
 
+/// Response of `GET /zones/{lat}/{lng}` — coordinates resolved to a zone.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GeoZone {
+    pub zone: String,
+    pub state: String,
+    pub district: String,
+}
+
 impl Zone {
     /// `WLY01 — Kuala Lumpur`
     pub fn display(&self) -> String {
@@ -76,6 +84,20 @@ impl ApiClient {
             .json()
             .await
             .context("failed to decode zones response")
+    }
+
+    /// Resolve coordinates to a JAKIM zone (server-side polygon matching).
+    /// A non-2xx response (e.g. HTTP 500 "No zone found" outside Malaysia)
+    /// surfaces as `Err`, letting callers fall back to centroid matching.
+    pub async fn nearest_zone(&self, lat: f64, lng: f64) -> Result<GeoZone> {
+        self.http
+            .get(format!("{BASE_URL}/zones/{lat}/{lng}"))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await
+            .context("failed to decode geo zone response")
     }
 
     pub async fn solat(&self, zone: &str, year: i32, month: u32) -> Result<SolatResponse> {

@@ -10,8 +10,8 @@ use crate::cache::{self, Cache, MONTH_TTL, ZONES_FILE, ZONES_TTL};
 
 /// Pick the zone to display: CLI arg > persisted config > first zone.
 /// Shared by the TUI (`App::set_zones`) and the CLI.
-pub fn resolve_zone<'a>(
-    zones: &'a [Zone],
+pub fn resolve_zone(
+    zones: &[Zone],
     config_zone: Option<&str>,
     override_zone: Option<&str>,
 ) -> Result<Zone, String> {
@@ -22,12 +22,30 @@ pub fn resolve_zone<'a>(
             .cloned()
             .ok_or_else(|| format!("Zone `{code}` not found"));
     }
-    if let Some(code) = config_zone {
-        if let Some(zone) = zones.iter().find(|z| z.jakim_code == code) {
-            return Ok(zone.clone());
-        }
+    if let Some(code) = config_zone
+        && let Some(zone) = zones.iter().find(|z| z.jakim_code == code)
+    {
+        return Ok(zone.clone());
     }
     zones.first().cloned().ok_or_else(|| "No zones available".to_string())
+}
+
+/// Zone list: fresh cache first, then the network.
+pub async fn load_zones(api: &ApiClient, cache: &Cache) -> Result<Vec<Zone>> {
+    if let Some(zones) = cache.load_fresh(ZONES_FILE, ZONES_TTL) {
+        return Ok(zones);
+    }
+    let zones = api.zones().await.context("failed to fetch zone list")?;
+    cache.store(ZONES_FILE, &zones);
+    Ok(zones)
+}
+
+/// Detect the current zone (manual coords if given, else IP geolocation).
+pub async fn detect_zone_endpoint(manual: Option<(f64, f64)>) -> Result<Zone> {
+    let api = ApiClient::new();
+    let cache = Cache::new()?;
+    let zones = load_zones(&api, &cache).await?;
+    crate::geo::detect_zone(&api, &zones, manual).await
 }
 
 /// Print today's prayer times for the resolved zone and exit.
@@ -36,15 +54,7 @@ pub async fn print_now(zone_override: Option<String>) -> Result<()> {
     let cache = Cache::new()?;
     let now = Local::now();
 
-    // Zone list: fresh cache first, then the network.
-    let zones: Vec<Zone> = match cache.load_fresh(ZONES_FILE, ZONES_TTL) {
-        Some(zones) => zones,
-        None => {
-            let zones = api.zones().await.context("failed to fetch zone list")?;
-            cache.store(ZONES_FILE, &zones);
-            zones
-        }
-    };
+    let zones = load_zones(&api, &cache).await?;
 
     let config_zone = cache.load_config().zone;
     let zone = resolve_zone(&zones, config_zone.as_deref(), zone_override.as_deref())

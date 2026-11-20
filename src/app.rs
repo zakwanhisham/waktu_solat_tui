@@ -23,6 +23,7 @@ use crate::{
 pub enum Msg {
     ZonesLoaded(Result<Vec<Zone>>),
     MonthLoaded { code: String, year: i32, month: u32, result: Result<SolatResponse> },
+    AutoZoneResolved(Result<Zone, String>),
 }
 
 /// Terminal input forwarded from the blocking reader thread.
@@ -57,7 +58,9 @@ pub struct App {
 
     pub mode: Mode,
     pub picker_query: String,
-    pub picker_filtered: Vec<usize>,
+    /// Picker rows: an auto-detect row pinned first (empty query only),
+    /// then all matching zones.
+    pub picker_rows: Vec<PickerRow>,
     pub picker_sel: usize,
     pub should_quit: bool,
 
@@ -67,6 +70,17 @@ pub struct App {
     pub viewport_rows: u16,
     /// Zone code from `--zone` / positional arg; takes priority over config.
     zone_override: Option<String>,
+    /// An auto-detection task is in flight.
+    pub detecting: bool,
+}
+
+/// One selectable row in the zone picker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickerRow {
+    /// "Use my location" — pinned to the top when the query is empty.
+    Auto,
+    /// Index into `App::zones`.
+    Zone(usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,12 +110,13 @@ impl App {
             table_state: TableState::default(),
             mode: Mode::Normal,
             picker_query: String::new(),
-            picker_filtered: Vec::new(),
+            picker_rows: Vec::new(),
             picker_sel: 0,
             should_quit: false,
             count: 0,
             viewport_rows: 12,
             zone_override,
+            detecting: false,
         })
     }
 
@@ -363,21 +378,27 @@ impl App {
 
     fn update_picker_filter(&mut self) {
         let q = self.picker_query.to_lowercase();
-        self.picker_filtered = self
-            .zones
-            .iter()
-            .enumerate()
-            .filter(|(_, z)| {
-                z.jakim_code.to_lowercase().contains(&q)
-                    || z.negeri.to_lowercase().contains(&q)
-                    || z.daerah.to_lowercase().contains(&q)
-            })
-            .map(|(i, _)| i)
-            .collect();
-        if self.picker_filtered.is_empty() {
+        let mut rows = Vec::new();
+        // The auto-detect row is only meaningful with no search text.
+        if q.is_empty() {
+            rows.push(PickerRow::Auto);
+        }
+        rows.extend(
+            self.zones
+                .iter()
+                .enumerate()
+                .filter(|(_, z)| {
+                    z.jakim_code.to_lowercase().contains(&q)
+                        || z.negeri.to_lowercase().contains(&q)
+                        || z.daerah.to_lowercase().contains(&q)
+                })
+                .map(|(i, _)| PickerRow::Zone(i)),
+        );
+        self.picker_rows = rows;
+        if self.picker_rows.is_empty() {
             self.picker_sel = 0;
         } else {
-            self.picker_sel = self.picker_sel.min(self.picker_filtered.len() - 1);
+            self.picker_sel = self.picker_sel.min(self.picker_rows.len() - 1);
         }
     }
 
@@ -389,19 +410,47 @@ impl App {
     }
 
     fn picker_move(&mut self, delta: i32) {
-        if self.picker_filtered.is_empty() {
+        if self.picker_rows.is_empty() {
             return;
         }
-        let len = self.picker_filtered.len() as i32;
+        let len = self.picker_rows.len() as i32;
         self.picker_sel = ((self.picker_sel as i32 + delta).rem_euclid(len)) as usize;
     }
 
     fn picker_confirm(&mut self) {
-        if let Some(&idx) = self.picker_filtered.get(self.picker_sel)
-            && let Some(zone) = self.zones.get(idx).cloned() {
-                self.mode = Mode::Normal;
-                self.select_zone(zone);
+        match self.picker_rows.get(self.picker_sel) {
+            Some(PickerRow::Zone(idx)) => {
+                if let Some(zone) = self.zones.get(*idx).cloned() {
+                    self.mode = Mode::Normal;
+                    self.select_zone(zone);
+                }
             }
+            Some(PickerRow::Auto) => {
+                self.mode = Mode::Normal;
+                self.start_detect();
+            }
+            None => {}
+        }
+    }
+
+    /// Kick off an auto-detection task (IP geolocation → server geo route →
+    /// centroid fallback). Idempotent while one is in flight.
+    fn start_detect(&mut self) {
+        if self.detecting {
+            return;
+        }
+        self.detecting = true;
+        self.error = None;
+        let tx = self.tx.clone();
+        let zones = self.zones.clone();
+        tokio::spawn(async move {
+            let result = async {
+                let api = ApiClient::new();
+                crate::geo::detect_zone(&api, &zones, None).await
+            }
+            .await;
+            let _ = tx.send(Msg::AutoZoneResolved(result.map_err(|e| format!("{e:#}"))));
+        });
     }
 
     pub async fn on_key(&mut self, key: KeyEvent) -> Result<bool> {
@@ -433,7 +482,7 @@ impl App {
 
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
-            KeyCode::Char('s') => self.open_picker(),
+            KeyCode::Char('s') | KeyCode::Char('a') => self.open_picker(),
             KeyCode::Char('?') => self.mode = Mode::Help,
             KeyCode::Char('j') | KeyCode::Down => self.table_move(n as i32),
             KeyCode::Char('k') | KeyCode::Up => self.table_move(-(n as i32)),
@@ -516,6 +565,18 @@ impl App {
         match msg {
             Msg::ZonesLoaded(result) => self.on_zones_loaded(result),
             Msg::MonthLoaded { code, year, month, result } => self.on_month_loaded(code, year, month, result),
+            Msg::AutoZoneResolved(result) => {
+                self.detecting = false;
+                match result {
+                    Ok(zone) => {
+                        self.error = None;
+                        self.select_zone(zone);
+                    }
+                    Err(e) => {
+                        self.error = Some(format!("Auto-detect failed: {e} — pick a zone manually"));
+                    }
+                }
+            }
         }
     }
 }

@@ -64,9 +64,27 @@ cargo run --release
 waktu_solat [ZONE]        start with a specific JAKIM zone code (e.g. WLY01)
 waktu_solat --zone CODE   same as above, overrides the persisted config
 waktu_solat --now         print today's prayer times and exit (no TUI)
+waktu_solat --auto-zone   detect the nearest zone and exit (works with --now)
+waktu_solat --lat --lng   manual coordinates; skips IP geolocation
 waktu_solat --help        usage
 waktu_solat --version     version
 ```
+
+### Auto-detection
+
+In the TUI, press `a` (or pick the pinned **Use my location** row in the zone
+picker, `s`) to resolve your nearest JAKIM zone. Detection is **opt-in only** —
+it never runs at startup. What it does:
+
+1. Looks up your approximate location via IP geolocation (`ipwho.is`) — or
+   uses the coordinates you passed with `--lat`/`--lng`, if any
+2. Asks the waktusolat API to resolve those coordinates to a zone
+   (`GET /zones/{lat}/{lng}`, server-side polygon matching)
+3. Falls back to a bundled nearest-centroid table if the API is unavailable;
+   if you appear to be more than 250 km from any zone (e.g. a VPN exit
+   node), it refuses to guess and asks you to pick a zone manually
+
+`--now --auto-zone` prints today's prayer times for wherever you are.
 
 `--now` output (headless, script-friendly — works through pipes):
 
@@ -123,6 +141,7 @@ Project structure:
 - `src/api.rs` — API models and HTTP client
 - `src/cache.rs` — disk cache + config persistence
 - `src/cli.rs` — headless `--now` output, shared zone resolver
+- `src/geo.rs` — location detection, coordinate→zone matching, centroid fallback
 - `src/app.rs` — application state, event loop, key handling, next-prayer logic
 - `src/ui.rs` — ratatui rendering
 

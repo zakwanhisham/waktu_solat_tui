@@ -9,7 +9,7 @@ use ratatui::{
 
 use crate::{
     api::PrayerDay,
-    app::{App, Mode},
+    app::{App, Mode, PickerRow},
 };
 
 const ACCENT: Color = Color::Cyan;
@@ -225,7 +225,9 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         Span::raw(" refresh"),
     ];
     let mut line = Line::from(hints);
-    if let Some(err) = &app.error {
+    if app.detecting {
+        line = Line::from(Span::styled("Detecting location…", Style::new().fg(ACCENT)));
+    } else if let Some(err) = &app.error {
         line = Line::from(Span::styled(err.clone(), Style::new().fg(Color::Red)));
     }
     f.render_widget(Paragraph::new(line), area);
@@ -240,8 +242,11 @@ fn draw_picker(f: &mut Frame, app: &App) {
             " Select zone ",
             Style::new().bold().fg(ACCENT),
         ))
-        .title_bottom(Line::from(format!(" {}/{} zones ", app.picker_filtered.len(), app.zones.len()))
-            .right_aligned());
+        .title_bottom(Line::from(format!(
+            " {} zones ",
+            app.picker_rows.iter().filter(|r| matches!(r, PickerRow::Zone(_))).count()
+        ))
+        .right_aligned());
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -257,15 +262,22 @@ fn draw_picker(f: &mut Frame, app: &App) {
     );
 
     let items: Vec<ListItem> = app
-        .picker_filtered
+        .picker_rows
         .iter()
-        .filter_map(|&i| app.zones.get(i))
-        .map(|z| {
-            ListItem::new(Line::from(vec![
-                Span::styled(format!("{: <7}", z.jakim_code), Style::new().bold()),
-                Span::styled(format!("{: <16}", z.negeri), Style::new().fg(ACCENT)),
-                Span::raw(truncate(&z.daerah, inner.width.saturating_sub(30) as usize)),
-            ]))
+        .filter_map(|row| match row {
+            PickerRow::Auto => Some(ListItem::new(Line::from(vec![
+                Span::styled("📍 ", Style::new()),
+                Span::styled("Use my location", Style::new().bold().fg(ACCENT)),
+                Span::styled("  (IP-based, opt-in)", Style::new().dim()),
+            ]))),
+            PickerRow::Zone(i) => {
+                let z = app.zones.get(*i)?;
+                Some(ListItem::new(Line::from(vec![
+                    Span::styled(format!("{: <7}", z.jakim_code), Style::new().bold()),
+                    Span::styled(format!("{: <16}", z.negeri), Style::new().fg(ACCENT)),
+                    Span::raw(truncate(&z.daerah, inner.width.saturating_sub(30) as usize)),
+                ])))
+            }
         })
         .collect();
 
@@ -311,7 +323,7 @@ fn draw_help(f: &mut Frame, app: &App) {
     };
     let text = vec![
         key("q / Esc", "Quit the app"),
-        key("s", "Open the zone picker (type to filter, Ctrl-n/p to move)"),
+        key("s / a", "Zone picker (`a` opens on the auto-detect row)"),
         key("?", "Toggle this help overlay"),
         key("j / k", "Move selection down / up (counts work: `5j` = 5 rows)"),
         key("g / G", "Jump to the first / last day of the month"),
