@@ -25,6 +25,13 @@ pub enum Msg {
     MonthLoaded { code: String, year: i32, month: u32, result: Result<SolatResponse> },
 }
 
+/// Terminal input forwarded from the blocking reader thread.
+#[derive(Debug)]
+pub enum InputEvent {
+    Key(KeyEvent),
+    Resize,
+}
+
 type MonthKey = (String, i32, u32);
 
 pub struct App {
@@ -58,16 +65,19 @@ pub struct App {
     count: u32,
     /// Rows visible in the table (set by the renderer); used for half-page scrolls.
     pub viewport_rows: u16,
+    /// Zone code from `--zone` / positional arg; takes priority over config.
+    zone_override: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Normal,
     Picker,
+    Help,
 }
 
 impl App {
-    pub fn new() -> Result<Self> {
+    pub fn new(zone_override: Option<String>) -> Result<Self> {
         let (tx, rx) = mpsc::unbounded_channel();
         let now = Local::now();
         Ok(Self {
@@ -91,6 +101,7 @@ impl App {
             should_quit: false,
             count: 0,
             viewport_rows: 12,
+            zone_override,
         })
     }
 
@@ -113,15 +124,8 @@ impl App {
         }
 
         // 2) Ask for the current month even while zones load; the zone is
-        // resolved when zones arrive (or from the cached config default).
-        if self.zone.is_none() {
-            self.zone = self
-                .cache
-                .load_config()
-                .zone
-                .and_then(|code| self.zones.iter().find(|z| z.jakim_code == code).cloned())
-                .or_else(|| self.zones.first().cloned());
-        }
+        // resolved when zones arrive (CLI override > persisted config > first).
+        self.set_zones(self.zones.clone());
         if let Some(z) = self.zone.clone() {
             self.jump_to_today();
             self.request_month(z.jakim_code.clone(), self.view_year, self.view_month, false);
@@ -166,15 +170,26 @@ impl App {
 
     fn set_zones(&mut self, zones: Vec<Zone>) {
         self.zones = zones;
-        if self.zone.is_none() {
-            let wanted = self.cache.load_config().zone;
-            self.zone = self
-                .zones
-                .iter()
-                .find(|z| Some(&z.jakim_code) == wanted.as_ref())
-                .or_else(|| self.zones.first())
-                .cloned();
+        if self.zone.is_some() {
+            return;
         }
+        if let Some(code) = &self.zone_override {
+            match self.zones.iter().find(|z| &z.jakim_code == code) {
+                Some(z) => self.zone = Some(z.clone()),
+                None => {
+                    self.error = Some(format!("Zone `{code}` not found — falling back to default"));
+                    self.zone = self.zones.first().cloned();
+                }
+            }
+            return;
+        }
+        let wanted = self.cache.load_config().zone;
+        self.zone = self
+            .zones
+            .iter()
+            .find(|z| Some(&z.jakim_code) == wanted.as_ref())
+            .or_else(|| self.zones.first())
+            .cloned();
     }
 
     fn on_zones_loaded(&mut self, result: Result<Vec<Zone>>) {
@@ -310,6 +325,23 @@ impl App {
         Some(("Imsak", r2.imsak, true))
     }
 
+    /// The prayer window we are currently inside, if any:
+    /// `(prayer, epoch_secs_of_its_start)` for the most recent prayer whose
+    /// time has passed. `None` = night (after Isyak, before tomorrow's Imsak).
+    pub fn current_prayer(&self) -> Option<(&'static str, i64)> {
+        let code = self.zone.as_ref()?.jakim_code.clone();
+        let now = Local::now();
+        let (_, today_data) = self.months.get(&(code, now.year(), now.month()))?;
+        let row = today_data.prayers.iter().find(|p| p.day == now.day())?;
+        let now_ts = now.timestamp();
+        PrayerDay::KINDS
+            .iter()
+            .zip(row.times())
+            .rev()
+            .find(|(_, t)| *t <= now_ts)
+            .map(|(label, t)| (*label, t))
+    }
+
     fn ensure_tomorrow_data(&mut self) {
         // Prime the cache with next month's data when today is the last day of
         // the month, so the countdown survives midnight.
@@ -387,6 +419,7 @@ impl App {
         match self.mode {
             Mode::Normal => self.on_key_normal(key),
             Mode::Picker => self.on_key_picker(key),
+            Mode::Help => self.on_key_help(key),
         }
         Ok(self.should_quit)
     }
@@ -394,12 +427,11 @@ impl App {
     fn on_key_normal(&mut self, key: KeyEvent) {
         // Vim-style numeric prefix (`12j` moves 12 rows down). `0` only starts
         // a count when one is already in progress (bare `0` is ignored).
-        if let KeyCode::Char(c) = key.code {
-            if (c.is_ascii_digit() && c != '0') || (c == '0' && self.count > 0) {
+        if let KeyCode::Char(c) = key.code
+            && ((c.is_ascii_digit() && c != '0') || (c == '0' && self.count > 0)) {
                 self.count = (self.count.saturating_mul(10) + u32::from(c as u8 - b'0')).min(999);
                 return;
             }
-        }
         let n = if self.count == 0 { 1 } else { self.count };
         self.count = 0;
         let half_page = (self.viewport_rows / 2).max(1) as i32;
@@ -407,6 +439,7 @@ impl App {
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
             KeyCode::Char('s') => self.open_picker(),
+            KeyCode::Char('?') => self.mode = Mode::Help,
             KeyCode::Char('j') | KeyCode::Down => self.table_move(n as i32),
             KeyCode::Char('k') | KeyCode::Up => self.table_move(-(n as i32)),
             KeyCode::Char('g') => self.table_select_top(),
@@ -475,6 +508,15 @@ impl App {
         }
     }
 
+    fn on_key_help(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('?') | KeyCode::Char('q') => {
+                self.mode = Mode::Normal;
+            }
+            _ => {}
+        }
+    }
+
     pub fn on_msg(&mut self, msg: Msg) {
         match msg {
             Msg::ZonesLoaded(result) => self.on_zones_loaded(result),
@@ -493,8 +535,8 @@ impl Drop for QuitGuard {
 }
 
 /// Run the TUI event loop until the user quits.
-pub async fn run(terminal: &mut ratatui::DefaultTerminal) -> Result<()> {
-    let mut app = App::new()?;
+pub async fn run(terminal: &mut ratatui::DefaultTerminal, zone_override: Option<String>) -> Result<()> {
+    let mut app = App::new(zone_override)?;
     app.bootstrap();
 
     // Keyboard events are read on a dedicated blocking thread that *polls*
@@ -503,7 +545,7 @@ pub async fn run(terminal: &mut ratatui::DefaultTerminal) -> Result<()> {
     // when `main` returns, leaving the terminal stuck until Ctrl+C.
     let quit = Arc::new(AtomicBool::new(false));
     let _guard = QuitGuard(quit.clone());
-    let (key_tx, mut key_rx) = mpsc::unbounded_channel::<KeyEvent>();
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<InputEvent>();
     let reader = {
         let quit = quit.clone();
         tokio::task::spawn_blocking(move || {
@@ -511,7 +553,14 @@ pub async fn run(terminal: &mut ratatui::DefaultTerminal) -> Result<()> {
                 match crossterm::event::poll(Duration::from_millis(100)) {
                     Ok(true) => match crossterm::event::read() {
                         Ok(Event::Key(key)) => {
-                            if key_tx.send(key).is_err() {
+                            if event_tx.send(InputEvent::Key(key)).is_err() {
+                                break;
+                            }
+                        }
+                        // Redraw immediately on resize instead of waiting up
+                        // to a second for the next tick.
+                        Ok(Event::Resize(..)) => {
+                            if event_tx.send(InputEvent::Resize).is_err() {
                                 break;
                             }
                         }
@@ -525,7 +574,7 @@ pub async fn run(terminal: &mut ratatui::DefaultTerminal) -> Result<()> {
         })
     };
 
-    let result = event_loop(&mut app, terminal, &mut key_rx).await;
+    let result = event_loop(&mut app, terminal, &mut event_rx).await;
 
     // Stop the reader and join it *before* the runtime shuts down, so the
     // process exits promptly on every path (quit key or error).
@@ -537,19 +586,22 @@ pub async fn run(terminal: &mut ratatui::DefaultTerminal) -> Result<()> {
 async fn event_loop(
     app: &mut App,
     terminal: &mut ratatui::DefaultTerminal,
-    key_rx: &mut mpsc::UnboundedReceiver<KeyEvent>,
+    event_rx: &mut mpsc::UnboundedReceiver<InputEvent>,
 ) -> Result<()> {
     let mut ticker = tokio::time::interval(Duration::from_secs(1));
     loop {
         terminal.draw(|f| ui::draw(f, app))?;
         tokio::select! {
             _ = ticker.tick() => app.on_tick(),
-            Some(key) = key_rx.recv() => {
-                if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat)
-                    && app.on_key(key).await? {
-                        break;
-                    }
-            }
+            Some(event) = event_rx.recv() => match event {
+                InputEvent::Key(key) => {
+                    if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat)
+                        && app.on_key(key).await? {
+                            break;
+                        }
+                }
+                InputEvent::Resize => {}
+            },
             Some(msg) = app.recv_msg() => app.on_msg(msg),
         }
     }

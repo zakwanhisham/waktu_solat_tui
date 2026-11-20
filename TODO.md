@@ -61,11 +61,11 @@ A terminal UI (Rust + ratatui) that displays Malaysia prayer times from
 
 ## Milestone 4 — Polish
 
-- [ ] Keybindings help footer / `?` help overlay *(basic hints footer done; help overlay pending)*
-- [ ] Color theme: accent the currently-active prayer window
-- [ ] Show `last_updated` from the API and cache age *(cache age done; `last_updated` pending)*
-- [ ] Optional: `--zone WLY01` CLI arg overrides the persisted zone
-- [ ] Resize handling / reasonably render at small terminal sizes *(renders, but tight widths could be tuned)*
+- [x] Keybindings help footer / `?` help overlay
+- [x] Color theme: accent the currently-active prayer window (`Now: <prayer>` in the Next panel)
+- [x] Show `last_updated` from the API and cache age
+- [x] Optional: `--zone WLY01` CLI arg overrides the persisted zone (also `waktu_solat WLY01`, `--help`, `--version`)
+- [x] Resize handling / reasonably render at small terminal sizes (resize events trigger immediate redraw; narrow terminals clip columns gracefully)
 
 ## Stretch ideas
 

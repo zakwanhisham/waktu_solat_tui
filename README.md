@@ -50,10 +50,22 @@ cargo run --release
 |---|---|
 | `q` / `Esc` / `Ctrl-C` | Quit |
 | `s` | Open zone picker (type to filter, `↑`/`↓` or `Ctrl-n`/`Ctrl-p` to move, `Enter` to select) |
-| `←` / `→` (or `,` / `.`) | Previous / next month |
-| `j` / `k` (or `↑` / `↓`) | Move row selection |
+| `?` | Toggle the keybindings help overlay |
+| `←` / `→` (or `h` / `l`) | Previous / next month |
+| `j` / `k` (or `↑` / `↓`) | Move row selection (counts work: `5j` = 5 rows) |
+| `g` / `G` | Jump to the first / last day of the month |
+| `Ctrl-d` / `Ctrl-u` | Scroll half a page down / up |
 | `t` | Jump back to the current month / today |
 | `r` | Force refresh (bypass cache; also retries zone loading) |
+
+## Command line
+
+```text
+waktu_solat [ZONE]        start with a specific JAKIM zone code (e.g. WLY01)
+waktu_solat --zone CODE   same as above, overrides the persisted config
+waktu_solat --help        usage
+waktu_solat --version     version
+```
 
 ## Storage locations
 

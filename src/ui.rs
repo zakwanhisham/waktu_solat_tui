@@ -1,9 +1,9 @@
-use chrono::{Datelike, Local};
+use chrono::{DateTime, Datelike, Local};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table},
+    widgets::{Block, BorderType, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, Wrap},
     Frame,
 };
 
@@ -28,7 +28,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     draw_table(f, app, body);
     draw_footer(f, app, footer);
 
-    if app.mode == Mode::Picker {
+    if app.mode == Mode::Help {
+        draw_help(f, app);
+    } else if app.mode == Mode::Picker {
         draw_picker(f, app);
     }
 }
@@ -69,7 +71,12 @@ fn draw_next_prayer(f: &mut Frame, app: &App, area: Rect) {
             let diff = (secs - now.timestamp()).max(0);
             let countdown = if diff == 0 { "now".to_string() } else { format_secs(diff as u64) };
             let line1 = Line::from(vec![
-                Span::raw("Next: "),
+                Span::raw("Now: "),
+                match app.current_prayer() {
+                    Some((current, _)) => Span::styled(current, Style::new().bold().fg(ACCENT)),
+                    None => Span::raw("Night"),
+                },
+                Span::raw("  ·  Next: "),
                 Span::styled(label, Style::new().bold().fg(ACCENT)),
                 if tomorrow { Span::raw(" (tomorrow)") } else { Span::raw("") },
                 Span::raw(format!(" at {}, in ", target.format("%H:%M"))),
@@ -94,7 +101,7 @@ fn draw_next_prayer(f: &mut Frame, app: &App, area: Rect) {
             _ => Span::raw("No data yet — press `r` to retry."),
         })],
     };
-    f.render_widget(Paragraph::new(content).block(block), area);
+    f.render_widget(Paragraph::new(content).wrap(Wrap { trim: false }).block(block), area);
 }
 
 fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
@@ -103,11 +110,16 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
     app.viewport_rows = area.height.saturating_sub(3).max(1);
 
     let title = match (&app.zone, app.view_data()) {
-        (Some(z), Some((fetched, _data))) => {
+        (Some(z), Some((fetched, data))) => {
             let age = cache_age(fetched);
+            let updated = data
+                .last_updated
+                .and_then(|ts| DateTime::from_timestamp(ts, 0))
+                .map(|t| format!(" · JAKIM updated {}", t.with_timezone(&Local).format("%d %b %Y %H:%M")))
+                .unwrap_or_default();
             format!(
-                " {} {:04} · {} {} · {} ({}) ",
-                month_name(app.view_month), app.view_year, z.jakim_code, z.negeri, z.daerah, age
+                " {} {:04} · {} {} · {} ({}){} ",
+                month_name(app.view_month), app.view_year, z.jakim_code, z.negeri, z.daerah, age, updated
             )
         }
         (Some(_), None) => {
@@ -197,6 +209,8 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         Span::raw(" quit  "),
         Span::styled("s", Style::new().bold()),
         Span::raw(" zone  "),
+        Span::styled("?", Style::new().bold()),
+        Span::raw(" help  "),
         Span::styled("j/k", Style::new().bold()),
         Span::raw(" move  "),
         Span::styled("g/G", Style::new().bold()),
@@ -218,7 +232,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_picker(f: &mut Frame, app: &App) {
-    let area = picker_area(f.area());
+    let area = centered(f.area(), 70, 80);
     f.render_widget(Clear, area);
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
@@ -264,10 +278,58 @@ fn draw_picker(f: &mut Frame, app: &App) {
 
 // ---------- helpers ----------
 
-fn picker_area(area: Rect) -> Rect {
-    let [_, v] = Layout::vertical([Constraint::Percentage(15), Constraint::Percentage(70)]).areas(area);
-    let [_, h] = Layout::horizontal([Constraint::Percentage(10), Constraint::Percentage(80)]).areas(v);
+/// Centered popup area covering `vp`% of the height and `hp`% of the width.
+fn centered(area: Rect, vp: u16, hp: u16) -> Rect {
+    let [_, v] = Layout::vertical([
+        Constraint::Percentage((100 - vp) / 2),
+        Constraint::Percentage(vp),
+    ])
+    .areas(area);
+    let [_, h] = Layout::horizontal([
+        Constraint::Percentage((100 - hp) / 2),
+        Constraint::Percentage(hp),
+    ])
+    .areas(v);
     h
+}
+
+fn draw_help(f: &mut Frame, app: &App) {
+    let area = centered(f.area(), 70, 60);
+    f.render_widget(Clear, area);
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .title(Span::styled(" Keybindings ", Style::new().bold().fg(ACCENT)))
+        .title_bottom(Line::from(" Esc / q to close ").right_aligned());
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let key = |k: &str, desc: &str| -> Line<'static> {
+        Line::from(vec![
+            Span::styled(format!("{k: <10}"), Style::new().bold().fg(ACCENT)),
+            Span::raw(desc.to_string()),
+        ])
+    };
+    let text = vec![
+        key("q / Esc", "Quit the app"),
+        key("s", "Open the zone picker (type to filter, Ctrl-n/p to move)"),
+        key("?", "Toggle this help overlay"),
+        key("j / k", "Move selection down / up (counts work: `5j` = 5 rows)"),
+        key("g / G", "Jump to the first / last day of the month"),
+        key("Ctrl-d", "Scroll half a page down"),
+        key("Ctrl-u", "Scroll half a page up"),
+        key("h / l", "Previous / next month (arrows work too)"),
+        key("t", "Jump back to today"),
+        key("r", "Force refresh, bypassing the cache"),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!(
+                "Data: api.waktusolat.app (JAKIM e-solat) · zone {} · cached for 24 h",
+                app.zone.as_ref().map(|z| z.jakim_code.as_str()).unwrap_or("—")
+            ),
+            Style::new().dim(),
+        )),
+    ];
+    f.render_widget(Paragraph::new(text).wrap(Wrap { trim: true }), inner);
 }
 
 fn fmt_epoch(secs: i64) -> String {
