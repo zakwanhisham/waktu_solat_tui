@@ -12,7 +12,6 @@ use crate::{
     app::{App, Mode},
 };
 
-const TODAY_BG: Color = Color::Indexed(236);
 const ACCENT: Color = Color::Cyan;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
@@ -145,8 +144,11 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
                 .map(|p| {
                     let is_today =
                         data.year == today.year() && data.month_number == today.month() && p.day == today.day();
+                    // Today pops: bright gold text on a dark block, clearly
+                    // distinct from the blue selection highlight. Fixed 256
+                    // palette entries so themes can't make it unreadable.
                     let style = if is_today {
-                        Style::new().bg(TODAY_BG).bold()
+                        Style::new().bold().fg(Color::Indexed(220)).bg(Color::Indexed(238))
                     } else {
                         Style::new()
                     };
@@ -164,7 +166,11 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
                 .title(Span::styled(title, Style::new().bold())),
         )
         .column_spacing(1)
-        .row_highlight_style(Style::new().fg(Color::Black).bg(ACCENT))
+        // White on strong blue: readable in any terminal theme (fixed
+        // 256-palette entries, not theme-remappable 16-color values).
+        .row_highlight_style(
+            Style::new().bold().fg(Color::Indexed(231)).bg(Color::Indexed(25)),
+        )
         .highlight_symbol("› ");
 
     f.render_stateful_widget(table, area, &mut app.table_state);
@@ -251,7 +257,7 @@ fn draw_picker(f: &mut Frame, app: &App) {
 
     let mut list_state = ListState::default().with_selected(Some(app.picker_sel));
     let list = List::new(items)
-        .highlight_style(Style::new().fg(Color::Black).bg(ACCENT))
+        .highlight_style(Style::new().bold().fg(Color::Indexed(231)).bg(Color::Indexed(25)))
         .highlight_symbol("› ");
     f.render_stateful_widget(list, list_area, &mut list_state);
 }
