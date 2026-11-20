@@ -57,6 +57,7 @@ pub async fn print_now(zone_override: Option<String>) -> Result<()> {
     let zones = load_zones(&api, &cache).await?;
 
     let config_zone = cache.load_config().zone;
+    let hijri_style = cache.load_config().hijri_style();
     let zone = resolve_zone(&zones, config_zone.as_deref(), zone_override.as_deref())
         .map_err(anyhow::Error::msg)?;
 
@@ -86,7 +87,7 @@ pub async fn print_now(zone_override: Option<String>) -> Result<()> {
     let mut out = String::new();
     out.push_str(&format!("Waktu Solat · {}\n", zone.display()));
     out.push_str(&format!("{}\n", now.format("%a, %d %b %Y")));
-    out.push_str(&format!("Hijri {}\n\n", row.hijri));
+    out.push_str(&format!("Hijri {}\n\n", crate::hijri::format_full(row.hijri.trim(), hijri_style)));
     for (label, secs) in PrayerDay::KINDS.iter().zip(row.times()) {
         out.push_str(&format!("  {:<8} {}\n", label, fmt_time(secs)));
     }

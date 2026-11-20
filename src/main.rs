@@ -3,6 +3,7 @@ mod app;
 mod cache;
 mod cli;
 mod geo;
+mod hijri;
 mod notify;
 mod ui;
 

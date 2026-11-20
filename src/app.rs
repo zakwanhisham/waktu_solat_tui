@@ -82,6 +82,9 @@ pub struct App {
     notify_available: Option<bool>,
     /// Transient footer message with a tick countdown.
     pub status: Option<(String, u8)>,
+
+    /// Hijri date rendering style (Milestone 8).
+    pub hijri_style: crate::hijri::HijriStyle,
 }
 
 /// One selectable row in the zone picker.
@@ -134,6 +137,7 @@ impl App {
             last_notified: cfg.last_notified,
             notify_available: cfg.notify_available,
             status: None,
+            hijri_style: cfg.hijri_style(),
         })
     }
 
@@ -274,12 +278,36 @@ impl App {
             notify_minutes: Some(self.notify_lead),
             last_notified: self.last_notified,
             notify_available: self.notify_available,
+            hijri_style: Some(
+                match self.hijri_style {
+                    crate::hijri::HijriStyle::Malay => "malay",
+                    crate::hijri::HijriStyle::Numeric => "numeric",
+                    crate::hijri::HijriStyle::Arabic => "arabic",
+                }
+                .to_string(),
+            ),
         }
     }
 
     /// Transient footer message, cleared after a few seconds.
     fn set_status(&mut self, msg: String) {
         self.status = Some((msg, 5));
+    }
+
+    /// Cycle the Hijri rendering style and persist it.
+    fn cycle_hijri_style(&mut self) {
+        self.hijri_style = match self.hijri_style {
+            crate::hijri::HijriStyle::Malay => crate::hijri::HijriStyle::Numeric,
+            crate::hijri::HijriStyle::Numeric => crate::hijri::HijriStyle::Arabic,
+            crate::hijri::HijriStyle::Arabic => crate::hijri::HijriStyle::Malay,
+        };
+        let name = match self.hijri_style {
+            crate::hijri::HijriStyle::Malay => "malay (21 Syawal)",
+            crate::hijri::HijriStyle::Numeric => "numeric (21/10)",
+            crate::hijri::HijriStyle::Arabic => "arabic (٢١ شوال)",
+        };
+        self.set_status(format!("Hijri style: {name}"));
+        self.cache.store_config(&self.build_config());
     }
 
     fn jump_to_today(&mut self) {
@@ -563,6 +591,7 @@ impl App {
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
             KeyCode::Char('s') | KeyCode::Char('a') => self.open_picker(),
+            KeyCode::Char('c') => self.cycle_hijri_style(),
             KeyCode::Char('n') => {
                 self.notify_enabled = !self.notify_enabled;
                 // Allow retrying D-Bus if it failed on a previous session.

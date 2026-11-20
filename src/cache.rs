@@ -23,6 +23,9 @@ pub struct Config {
     pub notify_minutes: Option<u32>,
     pub last_notified: Option<i64>,
     pub notify_available: Option<bool>,
+    /// Hijri display style (Milestone 8): "malay" (default), "numeric",
+    /// "arabic".
+    pub hijri_style: Option<String>,
 }
 
 impl Config {
@@ -34,6 +37,11 @@ impl Config {
     /// Lead time in minutes. Default: 10.
     pub fn notify_lead_minutes(&self) -> u32 {
         self.notify_minutes.unwrap_or(crate::notify::DEFAULT_LEAD_MINUTES)
+    }
+
+    /// Hijri rendering style. Default: `malay`.
+    pub fn hijri_style(&self) -> crate::hijri::HijriStyle {
+        crate::hijri::HijriStyle::from_config(self.hijri_style.as_deref())
     }
 }
 

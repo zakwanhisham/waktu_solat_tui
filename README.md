@@ -56,6 +56,7 @@ cargo run --release
 | `s` | Open zone picker (type to filter, `↑`/`↓` or `Ctrl-n`/`Ctrl-p` to move, `Enter` to select) |
 | `a` | Open the zone picker on the auto-detect ("Use my location") row |
 | `n` | Toggle desktop reminders (off by default) |
+| `c` | Cycle Hijri date style: Malay names → numeric → Arabic |
 | `?` | Toggle the keybindings help overlay |
 | `←` / `→` (or `h` / `l`) | Previous / next month |
 | `j` / `k` (or `↑` / `↓`) | Move row selection (counts work: `5j` = 5 rows) |
@@ -89,6 +90,14 @@ or setting `"notify": true` in `~/.config/waktu_solat/config.json`:
 |---|---|
 | `notify` | enable/disable reminders (toggled live with `n`) |
 | `notify_minutes` | minutes before the prayer (default 10) |
+| `hijri_style` | Hijri date rendering: `malay` (default, e.g. `21 Syawal`), `numeric` (`21/10`), `arabic` (`٢١ شوال`) |
+
+The `arabic` style uses Arabic script and Arabic-Indic digits, isolated in
+their own table column — how well it displays depends on your terminal's
+bidi/RTL support; the `malay` style is safe everywhere. The Hijri column is
+**adaptive**: full month names on wide terminals, the numeric short form when
+the window is tight, and the column is dropped entirely on very narrow ones
+so prayer times always stay visible.
 
 The reminder fires once per prayer occurrence — if the app is started inside
 the lead window it still notifies; if it starts after a prayer has passed,
@@ -141,7 +150,7 @@ Now: Night · Next: Imsak at 05:40 (in 4h 12m)
 |---|---|
 | `~/.cache/waktu_solat/solat-<ZONE>-<YEAR>-<MONTH>.json` | Cached monthly prayer times (24 h TTL) |
 | `~/.cache/waktu_solat/zones.json` | Cached zone list (7 day TTL) |
-| `~/.config/waktu_solat/config.json` | Persisted zone selection |
+| `~/.config/waktu_solat/config.json` | Persisted zone selection, notification settings, Hijri style |
 
 (`XDG_CACHE_HOME` / `XDG_CONFIG_HOME` are respected.)
 

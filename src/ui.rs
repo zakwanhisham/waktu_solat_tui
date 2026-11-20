@@ -117,6 +117,7 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
     // Rows visible inside the bordered block: height - 2 borders - 1 header
     // row. The app uses this to size half-page scrolls (Ctrl-d / Ctrl-u).
     app.viewport_rows = area.height.saturating_sub(3).max(1);
+    let today = Local::now().date_naive();
 
     let title = match (&app.zone, app.view_data()) {
         (Some(z), Some((fetched, data))) => {
@@ -126,9 +127,22 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
                 .and_then(|ts| DateTime::from_timestamp(ts, 0))
                 .map(|t| format!(" · JAKIM updated {}", t.with_timezone(&Local).format("%d %b %Y %H:%M")))
                 .unwrap_or_default();
+            // Hijri month of the viewed month. Hijri months straddle
+            // Gregorian ones, so anchor on today's row when viewing the
+            // current month, else the first row. Romanized names only — the
+            // title line is LTR context (bidi-safe).
+            let anchor = if data.year == today.year() && data.month_number == today.month() {
+                data.prayers.iter().find(|p| p.day == today.day())
+            } else {
+                data.prayers.first()
+            };
+            let hijri_month = anchor
+                .and_then(|p| crate::hijri::parse(&p.hijri))
+                .map(|(y, m, _)| format!(" · {} {y} ", crate::hijri::MONTHS_MALAY[m as usize - 1]))
+                .unwrap_or_default();
             format!(
-                " {} {:04} · {} {} · {} ({}){} ",
-                month_name(app.view_month), app.view_year, z.jakim_code, z.negeri, z.daerah, age, updated
+                " {} {:04} · {} {} · {} ({}){}{}",
+                month_name(app.view_month), app.view_year, z.jakim_code, z.negeri, z.daerah, age, updated, hijri_month
             )
         }
         (Some(_), None) => {
@@ -137,26 +151,44 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
         _ => format!(" {} {:04} ", month_name(app.view_month), app.view_year),
     };
 
-    let widths = [
-        Constraint::Length(5),
+    // Adaptive Hijri column: full month names when the terminal is wide
+    // enough, the numeric short form when tight, and the column dropped
+    // entirely on very narrow terminals (prayer times matter most).
+    // avail = table width minus borders (2) and the selection symbol (2).
+    let avail = area.width.saturating_sub(4);
+    let (hijri_width, hijri_style_eff, spacing) = if avail >= 89 {
+        (Some(15_u16), app.hijri_style, 1_u16)
+    } else if avail >= 69 {
+        // Compact the inter-column spacing below 78 to buy the numeric
+        // column room.
+        (Some(7_u16), crate::hijri::HijriStyle::Numeric, if avail >= 78 { 1 } else { 0 })
+    } else {
+        (None, crate::hijri::HijriStyle::Numeric, 1)
+    };
+
+    let mut widths: Vec<Constraint> = vec![Constraint::Length(5)];
+    let mut header_cells: Vec<&str> = vec!["Day"];
+    if let Some(w) = hijri_width {
+        widths.push(Constraint::Length(w));
+        header_cells.push("Hijri");
+    }
+    // Imsak, Subuh, Syuruk, Dhuha, Zohor, Asar, Maghrib, Isyak
+    widths.extend([
         Constraint::Length(7),
         Constraint::Length(7),
         Constraint::Length(7),
         Constraint::Length(7),
         Constraint::Length(7),
         Constraint::Length(7),
-        Constraint::Length(6),
         Constraint::Length(8),
         Constraint::Length(7),
-    ];
+    ]);
+    header_cells.extend(["Imsak", "Subuh", "Syuruk", "Dhuha", "Zohor", "Asar", "Maghrib", "Isyak"]);
 
-    let header = Row::new([
-        "Day", "Hijri", "Imsak", "Subuh", "Syuruk", "Dhuha", "Zohor", "Asar", "Maghrib", "Isyak",
-    ])
+    let header = Row::new(header_cells)
     .style(Style::new().bold().fg(ACCENT))
     .bottom_margin(0);
 
-    let today = Local::now().date_naive();
     let rows: Vec<Row> = app
         .view_data()
         .map(|(_, data)| {
@@ -173,7 +205,7 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
                     } else {
                         Style::new()
                     };
-                    Row::new(prayer_cells(p)).style(style)
+                    Row::new(prayer_cells(p, hijri_style_eff, hijri_width.is_some())).style(style)
                 })
                 .collect()
         })
@@ -186,7 +218,7 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
                 .border_type(BorderType::Rounded)
                 .title(Span::styled(title, Style::new().bold())),
         )
-        .column_spacing(1)
+        .column_spacing(spacing)
         // White on strong blue: readable in any terminal theme (fixed
         // 256-palette entries, not theme-remappable 16-color values).
         .row_highlight_style(
@@ -197,10 +229,16 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_stateful_widget(table, area, &mut app.table_state);
 }
 
-fn prayer_cells(p: &PrayerDay) -> Vec<Cell<'static>> {
-    vec![
-        Cell::from(format!("{:2}", p.day)),
-        Cell::from(short_hijri(&p.hijri)),
+fn prayer_cells(
+    p: &PrayerDay,
+    hijri_style: crate::hijri::HijriStyle,
+    include_hijri: bool,
+) -> Vec<Cell<'static>> {
+    let mut cells = vec![Cell::from(format!("{:2}", p.day))];
+    if include_hijri {
+        cells.push(Cell::from(crate::hijri::format_cell(&p.hijri, hijri_style)));
+    }
+    cells.extend([
         Cell::from(fmt_epoch(p.imsak)),
         Cell::from(fmt_epoch(p.fajr)),
         Cell::from(fmt_epoch(p.syuruk)),
@@ -209,7 +247,8 @@ fn prayer_cells(p: &PrayerDay) -> Vec<Cell<'static>> {
         Cell::from(fmt_epoch(p.asr)),
         Cell::from(fmt_epoch(p.maghrib)),
         Cell::from(fmt_epoch(p.isha)),
-    ]
+    ]);
+    cells
 }
 
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
@@ -342,6 +381,14 @@ fn draw_help(f: &mut Frame, app: &App) {
         key("Ctrl-u", "Scroll half a page up"),
         key("h / l", "Previous / next month (arrows work too)"),
         key("t", "Jump back to today"),
+        key("c", &format!(
+            "Cycle Hijri style ({})",
+            match app.hijri_style {
+                crate::hijri::HijriStyle::Malay => "malay",
+                crate::hijri::HijriStyle::Numeric => "numeric",
+                crate::hijri::HijriStyle::Arabic => "arabic",
+            }
+        )),
         key("n", &format!(
             "Toggle desktop reminders ({}, lead {}m)",
             if app.notify_enabled { "on" } else { "off" },
@@ -372,15 +419,6 @@ fn format_secs(total: u64) -> String {
     let m = (total % 3600) / 60;
     let s = total % 60;
     format!("{h:02}:{m:02}:{s:02}")
-}
-
-fn short_hijri(hijri: &str) -> String {
-    let parts: Vec<&str> = hijri.split('-').collect();
-    if parts.len() == 3 {
-        format!("{}/{}", parts[2], parts[1])
-    } else {
-        hijri.to_string()
-    }
 }
 
 fn cache_age(fetched_at: u64) -> String {

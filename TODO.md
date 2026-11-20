@@ -180,11 +180,55 @@ timestamp; decision logic pure + unit-tested, D-Bus call behind a
 - [x] Docs: README (feature, config keys, headless behavior) + mark the
   notification line under *Stretch ideas* as superseded
 
+## Milestone 8 — RTL-friendly Hijri rendering
+
+Goal: render Hijri dates the way they read to humans — Hijri month names —
+with an opt-in Arabic-script mode. Terminal bidi is inconsistent, so Arabic
+text is always isolated in its own cell/line (never mixed into LTR
+sentences), and the safe romanized style is the default.
+
+Decisions: config key `hijri_style` — `malay` (default, JAKIM Takwim
+spelling), `numeric` (status quo), `arabic` (Arabic month names +
+Arabic-Indic digits); month name shown directly in the table column
+(width 7 → 11).
+
+- [x] `src/hijri.rs` (new, pure functions):
+  - [x] `parse("1448-06-11") -> Option<(year, month, day)>`; malformed
+    strings → None, callers fall back to raw display
+  - [x] `MONTHS_MALAY[12]` — Muharram, Safar, Rabiulawal, Rabiulakhir,
+    Jamadilawal, Jamadilakhir, Rejab, Syaaban, Ramadan, Syawal, Zulkaedah,
+    Zulhijah
+  - [x] `MONTHS_ARABIC[12]` — محرم, صفر, ربيع الأول, ربيع الآخر, جمادى
+    الأولى, جمادى الآخرة, رجب, شعبان, رمضان, شوال, ذو القعدة, ذو الحجة
+  - [x] `to_arabic_digits(s) -> String` (٠-٩)
+  - [x] `format_cell(hijri, style)` — `21 Syawal` / `21/06` / `٢١ شوال`
+  - [x] `format_full(hijri, style)` — `21 Syawal 1448` / `1448-06-11` /
+    `٢١ شوال ١٤٤٨`
+- [x] Config: `hijri_style: Option<String>` in `cache.rs`, default `malay`;
+  loaded in `App::new()` and `cli::print_now`
+- [x] `ui.rs`: Hijri column `Length(7) → Length(11)`, cells via
+  `format_cell`; table title appends `· Syawal 1448` when the viewed month
+  has data
+- [x] Adaptive Hijri column — three tiers by terminal width (measured live):
+  full month names when the table fits them (≈ ≥93 cols), numeric short form
+  when tight (≈ 73–92 cols, inter-column spacing compacts to 0 below 82),
+  and the column dropped entirely below ≈73 cols so prayer times stay
+  visible; the effective rendering style follows the tier, not just the
+  configured one
+- [x] `cli.rs`: `--now` header line uses `format_full`
+- [x] Unit tests: parsing (valid/malformed), 12-month mapping, digit
+  conversion, all three styles, graceful fallback
+- [x] `c` key cycles the Hijri style live in the TUI (Malay → numeric →
+  Arabic → Malay), persisted to config on each press, with a footer
+  confirmation showing the new style and a sample rendering
+- [x] Docs: README config key + Arabic-style terminal bidi caveat; mark the
+  RTL line under *Stretch ideas* as superseded
+
 ## Stretch ideas
 
 - [x] Auto-detect the nearest zone via GPS coords — superseded by Milestone 6
 - [x] Desktop notification a few minutes before the next prayer — superseded by Milestone 7
-- [ ] RTL-friendly Hijri month rendering
+- [x] RTL-friendly Hijri month rendering — superseded by Milestone 8
 
 ## Non-goals
 
