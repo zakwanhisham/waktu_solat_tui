@@ -57,9 +57,9 @@ fn draw_next_prayer(f: &mut Frame, app: &App, area: Rect) {
     // Permanent notification-state indicator, right-aligned in the title row
     // (the footer hint line has no room for it).
     let notify_state = if app.notify_enabled {
-        Line::styled("notify: on ", Style::new().fg(ACCENT)).right_aligned()
+        Line::styled(" notify: on ", Style::new().fg(ACCENT)).right_aligned()
     } else {
-        Line::styled("notify: off ", Style::new().dim()).right_aligned()
+        Line::styled(" notify: off ", Style::new().dim()).right_aligned()
     };
     let block = Block::bordered()
         .title(Line::styled(" Next ", Style::new().fg(ACCENT).bold()))
