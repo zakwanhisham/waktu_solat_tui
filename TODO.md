@@ -136,10 +136,54 @@ table as offline fallback; TUI entry points = pinned picker row + `a` key.
   Labuan→WLY02, outside-Malaysia threshold
 - [x] README: privacy note (what is sent, when) + new CLI flags documented
 
+## Milestone 7 — Desktop notifications
+
+Goal: a desktop reminder N minutes before the next prayer. **Disabled by
+default** — enabled with `n` in the TUI or `"notify": true` in config.json.
+Linux D-Bus only (via `notify-rust`); on headless/SSH boxes it degrades
+silently, never crashes, and never retries after a D-Bus failure.
+
+Decisions: lead time 10 minutes (configurable); dedup key = prayer epoch
+timestamp; decision logic pure + unit-tested, D-Bus call behind a
+`Notifier` trait; sent via `spawn_blocking` so ticks never block.
+
+- [x] `Cargo.toml`: add `notify-rust`
+- [x] Extend `Config` in `cache.rs` (backward-compatible `Option` fields):
+  - [x] `notify: Option<bool>` — default false
+  - [x] `notify_minutes: Option<u32>` — default 10
+  - [x] `last_notified: Option<i64>` — dedup state, persisted so restarting
+    inside the window doesn't double-notify
+  - [x] `notify_available: Option<bool>` — permanently `false` after a
+    D-Bus failure (headless machine) to avoid per-tick error spam
+- [x] `src/notify.rs` (new):
+  - [x] `should_notify(now, next_at, lead_minutes, last_notified) -> bool` —
+    pure; fires when `next_at - now <= lead * 60` and
+    `last_notified != Some(next_at)`; app started inside the window still
+    notifies, after-prayer occurrences are skipped
+  - [x] `Notifier` trait (`send(title, body)`) + `DesktopNotifier` impl
+    (notify-rust → D-Bus, `spawn_blocking`) + capture-double for tests
+  - [x] Text builder: title `Waktu Solat — Maghrib in 10 minutes`,
+    body `Maghrib at 19:00 · WLY01 Wilayah Persekutuan`
+- [x] Wire into `src/app.rs`:
+  - [x] Check in `on_tick()` (1 Hz): only when `notify` enabled,
+    `notify_available != Some(false)`, `should_notify()` true → persist
+    `last_notified`, spawn send; on failure set `notify_available = false`
+    + footer status
+  - [x] `n` key toggles notifications (persisted); turning on arms the
+    current window, turning off suppresses it
+- [x] UI (`src/ui.rs`): transient footer confirmation on toggle (the hints
+  line was too full for a permanent idle hint), notification state shown in
+  the `?` help overlay, `n` entry included
+- [x] Unit tests (`should_notify`): boundary at exactly 10:00, inside
+  window, dedup for the same occurrence, re-arm for the next one,
+  post-prayer skip; plus a capture-double `Notifier` test
+- [x] Docs: README (feature, config keys, headless behavior) + mark the
+  notification line under *Stretch ideas* as superseded
+
 ## Stretch ideas
 
 - [x] Auto-detect the nearest zone via GPS coords — superseded by Milestone 6
-- [ ] Desktop notification a few minutes before the next prayer
+- [x] Desktop notification a few minutes before the next prayer — superseded by Milestone 7
 - [ ] RTL-friendly Hijri month rendering
 
 ## Non-goals

@@ -17,6 +17,24 @@ struct Entry<T> {
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Config {
     pub zone: Option<String>,
+    /// Desktop reminder before the next prayer (Milestone 7). All fields are
+    /// optional so older config files keep working.
+    pub notify: Option<bool>,
+    pub notify_minutes: Option<u32>,
+    pub last_notified: Option<i64>,
+    pub notify_available: Option<bool>,
+}
+
+impl Config {
+    /// Reminder enabled? Default: off.
+    pub fn notify_enabled(&self) -> bool {
+        self.notify.unwrap_or(false)
+    }
+
+    /// Lead time in minutes. Default: 10.
+    pub fn notify_lead_minutes(&self) -> u32 {
+        self.notify_minutes.unwrap_or(crate::notify::DEFAULT_LEAD_MINUTES)
+    }
 }
 
 #[derive(Clone)]

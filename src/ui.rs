@@ -229,6 +229,8 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         line = Line::from(Span::styled("Detecting location…", Style::new().fg(ACCENT)));
     } else if let Some(err) = &app.error {
         line = Line::from(Span::styled(err.clone(), Style::new().fg(Color::Red)));
+    } else if let Some((status, _)) = &app.status {
+        line = Line::from(Span::styled(status.clone(), Style::new().fg(ACCENT)));
     }
     f.render_widget(Paragraph::new(line), area);
 }
@@ -331,6 +333,11 @@ fn draw_help(f: &mut Frame, app: &App) {
         key("Ctrl-u", "Scroll half a page up"),
         key("h / l", "Previous / next month (arrows work too)"),
         key("t", "Jump back to today"),
+        key("n", &format!(
+            "Toggle desktop reminders ({}, lead {}m)",
+            if app.notify_enabled { "on" } else { "off" },
+            app.notify_lead
+        )),
         key("r", "Force refresh, bypassing the cache"),
         Line::from(""),
         Line::from(Span::styled(

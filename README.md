@@ -30,6 +30,10 @@ q quit  s zone  ←→ month  j/k move  t today  r refresh
   pre-fetched on month boundaries)
 - **Searchable zone picker** — filter all 60 JAKIM zones by state or district;
   your selection persists across restarts
+- **Auto-detect zone** — resolve the nearest zone via IP geolocation (opt-in,
+  `a` key), with an offline centroid-table fallback
+- **Desktop reminders** — opt-in notification before the next prayer
+  (`n` key), once per occurrence, silent on headless machines
 - **Month browsing** — navigate past/future months, jump back to today
 - **Client-side caching** — month data cached for 24 h and the zone list for
   7 days (as the API asks), with a stale-cache fallback when offline
@@ -50,6 +54,8 @@ cargo run --release
 |---|---|
 | `q` / `Esc` / `Ctrl-C` | Quit |
 | `s` | Open zone picker (type to filter, `↑`/`↓` or `Ctrl-n`/`Ctrl-p` to move, `Enter` to select) |
+| `a` | Open the zone picker on the auto-detect ("Use my location") row |
+| `n` | Toggle desktop reminders (off by default) |
 | `?` | Toggle the keybindings help overlay |
 | `←` / `→` (or `h` / `l`) | Previous / next month |
 | `j` / `k` (or `↑` / `↓`) | Move row selection (counts work: `5j` = 5 rows) |
@@ -69,6 +75,27 @@ waktu_solat --lat --lng   manual coordinates; skips IP geolocation
 waktu_solat --help        usage
 waktu_solat --version     version
 ```
+
+### Desktop reminders
+
+Notifications are **off by default**. Enable them by pressing `n` in the TUI
+or setting `"notify": true` in `~/.config/waktu_solat/config.json`:
+
+```json
+{ "zone": "WLY01", "notify": true, "notify_minutes": 10 }
+```
+
+| Key | Meaning |
+|---|---|
+| `notify` | enable/disable reminders (toggled live with `n`) |
+| `notify_minutes` | minutes before the prayer (default 10) |
+
+The reminder fires once per prayer occurrence — if the app is started inside
+the lead window it still notifies; if it starts after a prayer has passed,
+that occurrence is skipped. Requires a desktop notification daemon
+(`org.freedesktop.Notifications`); on headless/SSH machines the app detects
+the failure once, remembers it (`notify_available: false`), and silently
+stops trying — the TUI itself is unaffected.
 
 ### Auto-detection
 

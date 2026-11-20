@@ -16,6 +16,7 @@ use tokio::sync::mpsc;
 use crate::{
     api::{ApiClient, PrayerDay, SolatResponse, Zone},
     cache::{self, Cache, Config},
+    notify::Notifier as _,
     ui,
 };
 
@@ -24,6 +25,7 @@ pub enum Msg {
     ZonesLoaded(Result<Vec<Zone>>),
     MonthLoaded { code: String, year: i32, month: u32, result: Result<SolatResponse> },
     AutoZoneResolved(Result<Zone, String>),
+    ReminderFailed(String),
 }
 
 /// Terminal input forwarded from the blocking reader thread.
@@ -72,6 +74,14 @@ pub struct App {
     zone_override: Option<String>,
     /// An auto-detection task is in flight.
     pub detecting: bool,
+
+    /// Desktop reminder state (Milestone 7).
+    pub notify_enabled: bool,
+    pub notify_lead: u32,
+    last_notified: Option<i64>,
+    notify_available: Option<bool>,
+    /// Transient footer message with a tick countdown.
+    pub status: Option<(String, u8)>,
 }
 
 /// One selectable row in the zone picker.
@@ -94,9 +104,11 @@ impl App {
     pub fn new(zone_override: Option<String>) -> Result<Self> {
         let (tx, rx) = mpsc::unbounded_channel();
         let now = Local::now();
+        let cache = Cache::new()?;
+        let cfg = cache.load_config();
         Ok(Self {
             api: ApiClient::new(),
-            cache: Cache::new()?,
+            cache,
             tx,
             rx,
             zones: Vec::new(),
@@ -117,6 +129,11 @@ impl App {
             viewport_rows: 12,
             zone_override,
             detecting: false,
+            notify_enabled: cfg.notify_enabled(),
+            notify_lead: cfg.notify_lead_minutes(),
+            last_notified: cfg.last_notified,
+            notify_available: cfg.notify_available,
+            status: None,
         })
     }
 
@@ -241,14 +258,28 @@ impl App {
         let is_new = self.zone.as_ref() != Some(&zone);
         self.zone = Some(zone);
         if is_new {
-            self.cache.store_config(&Config {
-                zone: self.zone.as_ref().map(|z| z.jakim_code.clone()),
-            });
+            self.cache.store_config(&self.build_config());
             self.jump_to_today();
         }
         if let Some(z) = self.zone.clone() {
             self.request_month(z.jakim_code.clone(), self.view_year, self.view_month, false);
         }
+    }
+
+    /// Full config snapshot from current app state (used for every persist).
+    fn build_config(&self) -> Config {
+        Config {
+            zone: self.zone.as_ref().map(|z| z.jakim_code.clone()),
+            notify: Some(self.notify_enabled),
+            notify_minutes: Some(self.notify_lead),
+            last_notified: self.last_notified,
+            notify_available: self.notify_available,
+        }
+    }
+
+    /// Transient footer message, cleared after a few seconds.
+    fn set_status(&mut self, msg: String) {
+        self.status = Some((msg, 5));
     }
 
     fn jump_to_today(&mut self) {
@@ -374,6 +405,55 @@ impl App {
 
     pub fn on_tick(&mut self) {
         self.ensure_tomorrow_data();
+        self.tick_status();
+        self.check_reminder();
+    }
+
+    /// Expire the transient footer message.
+    fn tick_status(&mut self) {
+        if let Some((_, remaining)) = &mut self.status {
+            if *remaining == 0 {
+                self.status = None;
+            } else {
+                *remaining -= 1;
+            }
+        }
+    }
+
+    /// Fire the desktop reminder when we enter the lead window of the next
+    /// prayer (once per occurrence).
+    fn check_reminder(&mut self) {
+        if !self.notify_enabled || self.notify_available == Some(false) {
+            return;
+        }
+        let Some((label, next_at, _)) = self.next_prayer() else {
+            return;
+        };
+        let now_ts = Local::now().timestamp();
+        if !crate::notify::should_notify(now_ts, next_at, self.notify_lead, self.last_notified) {
+            return;
+        }
+        // Mark this occurrence immediately (in-memory dedup); the task below
+        // persists it. If the send fails, we disable notifications entirely.
+        self.last_notified = Some(next_at);
+        let zone_display = self.zone.as_ref().map(|z| z.display()).unwrap_or_default();
+        let (title, body) = crate::notify::reminder_text(label, next_at, now_ts, &zone_display);
+        // NOTE: snapshot taken after the dedup update. A concurrent `n` toggle
+        // writing the config in the same second would be overwritten by this
+        // task's snapshot — harmless (last write wins within milliseconds).
+        let cfg = self.build_config();
+        let cache = self.cache.clone();
+        let tx = self.tx.clone();
+        tokio::task::spawn_blocking(move || {
+            match crate::notify::DesktopNotifier.send(&title, &body) {                Ok(()) => cache.store_config(&cfg),
+                Err(e) => {
+                    let mut cfg = cfg;
+                    cfg.notify_available = Some(false);
+                    cache.store_config(&cfg);
+                    let _ = tx.send(Msg::ReminderFailed(format!("{e:#}")));
+                }
+            }
+        });
     }
 
     fn update_picker_filter(&mut self) {
@@ -483,6 +563,16 @@ impl App {
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
             KeyCode::Char('s') | KeyCode::Char('a') => self.open_picker(),
+            KeyCode::Char('n') => {
+                self.notify_enabled = !self.notify_enabled;
+                // Allow retrying D-Bus if it failed on a previous session.
+                if self.notify_enabled {
+                    self.notify_available = None;
+                }
+                let state = if self.notify_enabled { "on" } else { "off" };
+                self.set_status(format!("Desktop notifications {state} (lead {}m)", self.notify_lead));
+                self.cache.store_config(&self.build_config());
+            }
             KeyCode::Char('?') => self.mode = Mode::Help,
             KeyCode::Char('j') | KeyCode::Down => self.table_move(n as i32),
             KeyCode::Char('k') | KeyCode::Up => self.table_move(-(n as i32)),
@@ -576,6 +666,10 @@ impl App {
                         self.error = Some(format!("Auto-detect failed: {e} — pick a zone manually"));
                     }
                 }
+            }
+            Msg::ReminderFailed(e) => {
+                self.notify_available = Some(false);
+                self.set_status(format!("Notifications unavailable: {e}"));
             }
         }
     }

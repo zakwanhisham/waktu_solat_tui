@@ -3,6 +3,7 @@ mod app;
 mod cache;
 mod cli;
 mod geo;
+mod notify;
 mod ui;
 
 use anyhow::{Context, Result};
