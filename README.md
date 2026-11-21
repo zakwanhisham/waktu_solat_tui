@@ -21,6 +21,12 @@ Peninsular Malaysia, Sabah and Sarawak.
 q quit  s zone  ←→ month  j/k move  t today  r refresh
 ```
 
+## REMINDER
+
+> **This feature only tested on Linux**
+> It may works in mac, but I don't have the device to test this.
+> Don't know about windows
+
 ## Features
 
 - **Full month table** — Day, Hijri, Imsak, Subuh, Syuruk, Dhuha, Zohor, Asar,
